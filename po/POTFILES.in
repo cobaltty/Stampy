@@ -1,0 +1,8 @@
+# List of source files containing translatable strings.
+# Please keep this file sorted alphabetically.
+data/com.cobaltty.stampy.desktop.in
+data/com.cobaltty.stampy.metainfo.xml.in
+data/com.cobaltty.stampy.gschema.xml
+src/main.c
+src/stampy-window.c
+src/stampy-window.ui

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="stampy">
+	<schema id="com.cobaltty.stampy" path="/com/cobaltty/stampy/">
+	</schema>
+</schemalist>

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Stampy
+Exec=stampy
+Icon=com.cobaltty.stampy
+Terminal=false
+Type=Application
+Categories=Utility;
+Keywords=GTK;
+StartupNotify=true
+DBusActivatable=true

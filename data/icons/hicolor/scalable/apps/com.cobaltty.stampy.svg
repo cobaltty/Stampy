@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="128"
+   height="128"
+   viewBox="0 0 128 128"
+   version="1.1"
+   id="svg15"
+   sodipodi:docname="com.cobaltty.stampy.svg"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview15"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="6.25"
+     inkscape:cx="64"
+     inkscape:cy="64"
+     inkscape:window-width="1920"
+     inkscape:window-height="1011"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg15" />
+  <defs
+     id="defs8">
+    <!-- Photo Blue Gradient -->
+    <linearGradient
+       id="sky-grad"
+       x1="0"
+       y1="0"
+       x2="0"
+       y2="1">
+      <stop
+         offset="0%"
+         stop-color="#62a0ea"
+         id="stop1" />
+      <stop
+         offset="100%"
+         stop-color="#1c71d8"
+         id="stop2" />
+    </linearGradient>
+    <!-- Stamp Wood Gradient -->
+    <linearGradient
+       id="wood-grad"
+       x1="0"
+       y1="0"
+       x2="0"
+       y2="1">
+      <stop
+         offset="0%"
+         stop-color="#f6d32d"
+         id="stop3" />
+      <stop
+         offset="50%"
+         stop-color="#e5a50a"
+         id="stop4" />
+      <stop
+         offset="100%"
+         stop-color="#c88800"
+         id="stop5" />
+    </linearGradient>
+    <!-- Base Metal Plate Gradient -->
+    <linearGradient
+       id="metal-grad"
+       x1="12.649111"
+       y1="56.920998"
+       x2="31.622777"
+       y2="56.920998"
+       gradientTransform="scale(1.8973666,0.52704628)"
+       gradientUnits="userSpaceOnUse">
+      <stop
+         offset="0%"
+         stop-color="#77767b"
+         id="stop6" />
+      <stop
+         offset="50%"
+         stop-color="#ffffff"
+         id="stop7" />
+      <stop
+         offset="100%"
+         stop-color="#9a9996"
+         id="stop8" />
+    </linearGradient>
+    <linearGradient
+       inkscape:collect="always"
+       xlink:href="#wood-grad"
+       id="linearGradient2"
+       x1="37.804321"
+       y1="14.813122"
+       x2="37.804321"
+       y2="27.774603"
+       gradientTransform="scale(0.9258201,1.0801234)"
+       gradientUnits="userSpaceOnUse" />
+    <linearGradient
+       inkscape:collect="always"
+       xlink:href="#wood-grad"
+       id="linearGradient3"
+       x1="31"
+       y1="2"
+       x2="31"
+       y2="22"
+       gradientUnits="userSpaceOnUse" />
+  </defs>
+  <!-- 1. Vector Drop Shadow for Base Photo Frame -->
+  <rect
+     x="20"
+     y="18"
+     width="88"
+     height="100"
+     rx="12"
+     fill="#000000"
+     opacity="0.2"
+     id="rect8" />
+  <!-- 2. Main Base Card (Photo Frame) -->
+  <g
+     id="photo-card">
+    <rect
+       x="20"
+       y="14"
+       width="88"
+       height="100"
+       rx="12"
+       fill="#ffffff"
+       id="rect9" />
+    <rect
+       x="26"
+       y="20"
+       width="76"
+       height="72"
+       rx="6"
+       fill="url(#sky-grad)"
+       id="rect10" />
+    <!-- Sun & Mountains inside Photo -->
+    <circle
+       cx="82"
+       cy="38"
+       r="8"
+       fill="#f6d32d"
+       opacity="0.9"
+       id="circle10" />
+    <polygon
+       points="72,82 84,68 102,92 26,92 52,58 "
+       fill="#3584e4"
+       id="polygon10"
+       transform="matrix(0.88842105,0,0,0.94315789,6.5810526,4.8968421)" />
+    <polygon
+       points="44,92 64,66 86,92"
+       fill="#1553a2"
+       opacity="0.4"
+       id="polygon11" />
+  </g>
+  <!-- 3. Stamped Ink Seal (Bottom Right Corner) -->
+  <g
+     id="ink-seal"
+     transform="translate(-6.72,14.08)">
+    <circle
+       cx="82"
+       cy="76"
+       r="18"
+       fill="none"
+       stroke="#ed333b"
+       stroke-width="2.5"
+       stroke-dasharray="6, 2"
+       id="circle11" />
+    <circle
+       cx="82"
+       cy="76"
+       r="14"
+       fill="none"
+       stroke="#ed333b"
+       stroke-width="1.2"
+       id="circle12" />
+    <!-- Compass Arrow -->
+    <polygon
+       points="85,79 82,88 79,79 70,76 79,73 82,64 85,73 94,76 "
+       fill="#ed333b"
+       id="polygon12" />
+  </g>
+  <!-- 4. Vector Drop Shadow for Stamp Handle -->
+  <!-- 5. Rubber Stamp Handle (Clean Vectors for Inkscape Editing) -->
+  <g
+     id="stamp-handle"
+     transform="matrix(1.244,0,0,1.3443478,23.112,49.711304)">
+    <!-- Stamp Base Mount -->
+    <rect
+       x="24"
+       y="30"
+       width="36"
+       height="10"
+       rx="2"
+       fill="url(#metal-grad)"
+       id="rect13"
+       style="fill:url(#metal-grad)" />
+    <rect
+       x="22"
+       y="38"
+       width="40"
+       height="6"
+       rx="2"
+       fill="#ed333b"
+       id="rect14" />
+    <!-- Handle Stem -->
+    <polygon
+       points="36,30 35,16 47,16 46,30 "
+       fill="url(#wood-grad)"
+       id="polygon14"
+       style="fill:url(#linearGradient2)" />
+    <!-- Round Knob -->
+    <circle
+       cx="41"
+       cy="12"
+       r="10"
+       fill="url(#wood-grad)"
+       id="circle14"
+       style="fill:url(#linearGradient3)" />
+    <circle
+       cx="38"
+       cy="9"
+       r="3"
+       fill="#ffffff"
+       opacity="0.4"
+       id="circle15" />
+    <rect
+       x="22"
+       y="40"
+       width="40"
+       height="8"
+       rx="2"
+       fill="#000000"
+       opacity="0.25"
+       id="rect12" />
+  </g>
+</svg>

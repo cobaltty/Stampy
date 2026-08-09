@@ -1,0 +1,131 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $StampyWindow : Adw.ApplicationWindow {
+  title: "Stampy";
+  default-width: 1100;
+  default-height: 700;
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    Box {
+      orientation: horizontal;
+      spacing: 16;
+      margin-top: 16; margin-bottom: 16; margin-start: 16; margin-end: 16;
+
+      /* =========================================
+         KOLOM KIRI: Drop Area & 3 Tombol Import
+         ========================================= */
+      Box {
+        orientation: vertical;
+        spacing: 12;
+        width-request: 320; /* Diperlebar biar 3 tombolnya panjang! */
+
+        Frame {
+          styles ["card"]
+          vexpand: true;
+
+          Box {
+            orientation: vertical;
+            halign: center;
+            valign: center;
+            spacing: 12;
+
+            Image { icon-name: "document-send-symbolic"; pixel-size: 64; }
+            Label { label: "Add Images"; styles ["title-4"] }
+            Label {
+              label: "Import the images by clicking\nthe icon or drag the images";
+              justify: center;
+              styles ["dim-label"]
+            }
+          }
+        }
+
+        /* 3 Tombol ini ID-nya udah siap diculik ke C buat ganti teks jadi Filepath! */
+        Button btn_compass { label: "Add Compass"; icon-name: "folder-symbolic"; height-request: 50; }
+        Button btn_watermark { label: "Add Watermark(.docx)"; icon-name: "text-x-generic-symbolic"; height-request: 50; }
+        Button btn_geolocation { label: "Add Geolocation(.xls)"; icon-name: "x-office-spreadsheet-symbolic"; height-request: 50; }
+      }
+
+      /* =========================================
+         KOLOM TENGAH: Live Preview (Portrait)
+         ========================================= */
+      Frame {
+        styles ["card"]
+        width-request: 280; /* Dijepit lebarnya biar dia panjang ke bawah! */
+        hexpand: false;
+
+        Picture img_preview {
+          vexpand: true;
+          content-fit: contain; /* Biar fotonya ga gepeng walau areanya panjang! */
+        }
+      }
+
+      /* =========================================
+         KOLOM KANAN: Settings & Terminal Output
+         ========================================= */
+      Box {
+        orientation: vertical;
+        spacing: 12;
+        hexpand: true; /* Dia yang bakal ngisi sisa kekosongan layar! */
+
+        /* Panel Setting (Atas) */
+        Frame {
+          styles ["card"]
+          Box {
+            orientation: vertical;
+            spacing: 16;
+            margin-top: 16; margin-bottom: 16; margin-start: 16; margin-end: 16;
+
+            Label { label: "Adjust Compass"; halign: start; styles ["heading"] }
+            Grid {
+              row-spacing: 12; column-spacing: 12;
+              DropDown drop_compass_pos { layout { row: 0; column: 0; } model: StringList { strings ["UpLeft", "UpRight", "DownLeft", "DownRight"] }; }
+              SpinButton val_compass_size { layout { row: 0; column: 1; } adjustment: Adjustment { lower: 0; upper: 500; step-increment: 1; }; value: 140; }
+              Label { layout { row: 0; column: 2; } label: "X"; }
+              SpinButton val_compass_x { layout { row: 0; column: 3; } adjustment: Adjustment { lower: 0; upper: 500; step-increment: 1; }; value: 76; }
+
+              SpinButton val_compass_opacity { layout { row: 1; column: 1; } adjustment: Adjustment { lower: 0; upper: 100; step-increment: 1; }; value: 76; }
+              Label { layout { row: 1; column: 2; } label: "Y"; }
+              SpinButton val_compass_y { layout { row: 1; column: 3; } adjustment: Adjustment { lower: 0; upper: 500; step-increment: 1; }; value: 76; }
+            }
+
+            Separator {}
+
+            Label { label: "Adjust Text"; halign: start; styles ["heading"] }
+            Grid {
+              row-spacing: 12; column-spacing: 12;
+              DropDown drop_text_pos { layout { row: 0; column: 0; } model: StringList { strings ["UpLeft", "UpRight", "DownLeft", "DownRight"] }; }
+              SpinButton val_text_size { layout { row: 0; column: 1; } adjustment: Adjustment { lower: 0; upper: 100; step-increment: 1; }; value: 19; }
+              Label { layout { row: 0; column: 2; } label: "X"; }
+              SpinButton val_text_x { layout { row: 0; column: 3; } adjustment: Adjustment { lower: 0; upper: 500; step-increment: 1; }; value: 76; }
+
+              DropDown drop_text_font { layout { row: 1; column: 0; } model: StringList { strings ["Arial", "Times New Roman", "JetBrains Mono"] }; }
+              SpinButton val_text_opacity { layout { row: 1; column: 1; } adjustment: Adjustment { lower: 0; upper: 100; step-increment: 1; }; value: 76; }
+              Label { layout { row: 1; column: 2; } label: "Y"; }
+              SpinButton val_text_y { layout { row: 1; column: 3; } adjustment: Adjustment { lower: 0; upper: 500; step-increment: 1; }; value: 76; }
+            }
+
+            Button btn_export { label: "Export / Save"; styles ["suggested-action"] }
+          }
+        }
+
+        /* Output Terminal Log (Bawah) */
+        Frame {
+          styles ["card"]
+          vexpand: true;
+          ScrolledWindow {
+            TextView txt_terminal_output {
+              editable: false;
+              monospace: true;
+              wrap-mode: word_char;
+              margin-top: 8; margin-bottom: 8; margin-start: 8; margin-end: 8;
+            }
+          }
+        }
+      }
+    }
+  }
+}

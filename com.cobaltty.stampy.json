@@ -1,0 +1,127 @@
+{
+    "id" : "com.cobaltty.stampy",
+    "runtime" : "org.gnome.Platform",
+    "runtime-version" : "50",
+    "sdk" : "org.gnome.Sdk",
+    "command" : "stampy",
+    "finish-args" : [
+        "--share=network",
+        "--share=ipc",
+        "--socket=fallback-x11",
+        "--device=dri",
+        "--socket=wayland",
+        "--socket=session-bus",
+        "--filesystem=host",
+        "--filesystem=home",
+        "--filesystem=xdg-run/gvfsd",
+        "--talk-name=org.freedesktop.portal.Desktop",
+        "--talk-name=org.freedesktop.portal.FileChooser",
+        "--talk-name=org.freedesktop.portal.Flatpak",
+        "--talk-name=org.freedesktop.portal.Documents",
+        "--talk-name=org.freedesktop.impl.portal.desktop.gtk",
+        "--system-talk-name=org.freedesktop.Flatpak"
+    ],
+    "cleanup" : [
+        "/include",
+        "/lib/pkgconfig",
+        "/man",
+        "/share/doc",
+        "/share/gtk-doc",
+        "/share/man",
+        "/share/pkgconfig",
+        "*.la",
+        "*.a"
+    ],
+    "modules": [
+        {
+            "name": "blueprint-compiler",
+            "buildsystem": "meson",
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://gitlab.gnome.org/GNOME/blueprint-compiler.git",
+                    "tag": "v0.12.0"
+                }
+            ]
+        },
+        {
+            "name": "perl",
+            "buildsystem": "simple",
+            "build-commands": [
+                "./Configure -des -Dprefix=/app",
+                "make -j4",
+                "make install",
+                "chmod -R u+w /app/lib/perl5"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://www.cpan.org/src/5.0/perl-5.38.2.tar.gz",
+                    "sha256": "a0a31534451eb7b83c7d6594a497543a54d488bc90ca00f5e34762577f40655e"
+                }
+            ]
+        },
+        {
+            "name": "exiftool",
+            "buildsystem": "simple",
+            "build-commands": [
+                "perl Makefile.PL PREFIX=/app",
+                "make",
+                "make install",
+                "mkdir -p /app/bin",
+                "cp -f exiftool /app/bin/exiftool",
+                "chmod +x /app/bin/exiftool"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://github.com/exiftool/exiftool/archive/refs/tags/13.10.tar.gz",
+                    "sha256": "a2e2739435c3b5106d411a538cecb2e138a1bf1b82fd5ad5059a678b4ed2b7da"
+                }
+            ]
+        },
+        {
+            "name": "exiv2",
+            "buildsystem": "cmake-ninja",
+            "config-opts": [
+                "-DEXIV2_ENABLE_NLS=OFF",
+                "-DEXIV2_BUILD_EXIV2_COMMAND=OFF",
+                "-DEXIV2_ENABLE_VIDEO=OFF",
+                "-DEXIV2_ENABLE_INIH=OFF"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://github.com/Exiv2/exiv2/archive/refs/tags/v0.28.2.tar.gz",
+                    "sha256": "543bead934135f20f438e0b6d8858c55c5fcb7ff80f5d1d55489965f1aad58b9"
+                }
+            ]
+        },
+        {
+            "name": "gexiv2",
+            "buildsystem": "meson",
+            "config-opts": [
+                "-Dvapi=false",
+                "-Dintrospection=false",
+                "-Dpython3=false"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://download.gnome.org/sources/gexiv2/0.14/gexiv2-0.14.2.tar.xz",
+                    "sha256": "2a0c9cf48fbe8b3435008866ffd40b8eddb0667d2212b42396fdf688e93ce0be"
+                }
+            ]
+        },
+        {
+            "name": "stampy",
+            "buildsystem": "meson",
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": "."
+                }
+            ]
+        }
+    ]
+}
