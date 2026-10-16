@@ -34,22 +34,32 @@ jobs:
           echo "tag: $tag, meson.build: $ver"
           test "$tag" = "$ver"
 
+      - name: Import signing key
+        env:
+          FLATPAK_GPG_KEY: ${{ secrets.FLATPAK_GPG_KEY }}
+        run: |
+          echo "$FLATPAK_GPG_KEY" | gpg --batch --import
+          gpg --list-secret-keys "${{ secrets.FLATPAK_GPG_KEYID }}"
+
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: stampy.flatpak
           manifest-path: com.cobaltty.stampy.json
           branch: stable
+          gpg-sign: ${{ secrets.FLATPAK_GPG_KEYID }}
 
       - name: Update repository metadata
-        run: flatpak build-update-repo repo
+        run: flatpak build-update-repo --gpg-sign="${{ secrets.FLATPAK_GPG_KEYID }}" repo
 
       - name: Add remote file
         run: |
-          cat > repo/com.cobaltty.stampy.flatpakrepo <<'EOF'
+          GPGKEY=$(gpg --export "${{ secrets.FLATPAK_GPG_KEYID }}" | base64 -w0)
+          cat > repo/com.cobaltty.stampy.flatpakrepo <<EOF
           [Flatpak Repo]
           Title=Stampy
           Url=https://cobaltty.github.io/Stampy/
           Homepage=https://github.com/cobaltty/Stampy
+          GPGKey=$GPGKEY
           EOF
 
       - uses: actions/upload-pages-artifact@v3
