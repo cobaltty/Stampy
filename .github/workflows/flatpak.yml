@@ -1,0 +1,60 @@
+name: Flatpak
+
+# Pushing a tag like v1.5.000.beta builds the app from that tag and
+# publishes it to the GitHub Pages flatpak remote (OTA updates).
+# The tag MUST match meson.build (minus the leading "v"), enforced below.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  flatpak:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(grep -m1 -o "version: '[^']*'" meson.build | cut -d"'" -f2)
+          echo "tag: $tag, meson.build: $ver"
+          test "$tag" = "$ver"
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: stampy.flatpak
+          manifest-path: com.cobaltty.stampy.json
+          branch: stable
+
+      - name: Update repository metadata
+        run: flatpak build-update-repo repo
+
+      - name: Add remote file
+        run: |
+          cat > repo/com.cobaltty.stampy.flatpakrepo <<'EOF'
+          [Flatpak Repo]
+          Title=Stampy
+          Url=https://cobaltty.github.io/Stampy/
+          Homepage=https://github.com/cobaltty/Stampy
+          EOF
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: repo
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
