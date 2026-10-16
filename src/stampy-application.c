@@ -1,5 +1,6 @@
 #include "stampy-application.h"
 #include "stampy-window.h"
+#include "config.h"
 
 struct _StampyApplication
 {
@@ -20,7 +21,7 @@ stampy_application_new (const char        *application_id,
                        NULL);
 }
 
-/* --- ABOUT DIALOG CALLBACK --- */
+/* About dialog. */
 static void
 stampy_application_show_about (GSimpleAction *action,
                                 GVariant      *parameter,
@@ -41,16 +42,16 @@ stampy_application_show_about (GSimpleAction *action,
                          "application-name", "Stampy",
                          "application-icon", "com.cobaltty.stampy",
                          "developer-name", "cobaltty",
-                         "version", "1.4.001.beta",
+                          "version", PACKAGE_VERSION,
                          "developers", developers,
                          "copyright", "© 2026 cobaltty",
-                         "website", "https://github.com/cobaltty/stampy",
-                         "issue-url", "https://github.com/cobaltty/stampy/issues",
+                         "website", "https://github.com/cobaltty/Stampy",
+                         "issue-url", "https://github.com/cobaltty/Stampy/issues",
                          "license-type", GTK_LICENSE_GPL_3_0,
                          NULL);
 }
 
-/* --- SHORTCUTS DIALOG CALLBACK --- */
+/* Shortcuts dialog. */
 static gboolean
 on_shortcuts_close_idle (gpointer user_data)
 {
@@ -101,11 +102,11 @@ stampy_application_startup (GApplication *app)
 
   G_APPLICATION_CLASS (stampy_application_parent_class)->startup (app);
 
-  /* Register the custom GResource icons directory with GTK Icon Theme */
+  /* Expose bundled icons to the icon theme. */
   icon_theme = gtk_icon_theme_get_for_display (gdk_display_get_default ());
   gtk_icon_theme_add_resource_path (icon_theme, "/com/cobaltty/stampy/icons");
 
-  /* --- REGISTER ACTIONS --- */
+  /* Application actions. */
   about_action = g_simple_action_new ("about", NULL);
   g_signal_connect (about_action, "activate", G_CALLBACK (stampy_application_show_about), app);
   g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (about_action));
@@ -114,7 +115,7 @@ stampy_application_startup (GApplication *app)
   g_signal_connect (shortcuts_action, "activate", G_CALLBACK (stampy_application_show_shortcuts), app);
   g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (shortcuts_action));
 
-  /* --- KEYBOARD SHORTCUTS --- */
+  /* Keyboard shortcuts. */
   gtk_application_set_accels_for_action (GTK_APPLICATION (app),
       "app.shortcuts",
       (const char *[]){ "<Control>question", NULL });

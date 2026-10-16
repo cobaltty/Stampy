@@ -27,7 +27,7 @@ static guint pos_string_to_index(const char *str) {
     return 0;
 }
 
-/* Helper internal untuk memastikan folder tujuan selalu dibuat */
+/* Creates the destination's parent directory if missing. */
 static void ensure_parent_directory_exists(const char *filepath) {
     if (filepath) {
         g_autofree char *dirname = g_path_get_dirname(filepath);
@@ -37,9 +37,7 @@ static void ensure_parent_directory_exists(const char *filepath) {
     }
 }
 
-/* ==========================================================
-   SCANNER & PRESET FILE I/O HANDLERS
-   ========================================================== */
+/* Preset discovery and file I/O. */
 void stampy_scan_and_populate_presets(StampyWindow *self) {
     g_autofree char *config_dir = NULL;
     GDir *dir = NULL;
@@ -91,7 +89,7 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
 
     if (!self || !filepath) return;
 
-    /* WAJIB: Pastikan folder config induk sudah dibuat di disk! */
+    /* The config directory must exist before writing. */
     ensure_parent_directory_exists(filepath);
 
     c_idx = gtk_drop_down_get_selected(GTK_DROP_DOWN(self->drop_compass_pos));
@@ -102,7 +100,7 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
     c_pos = pos_index_to_string(c_idx);
     t_pos = pos_index_to_string(t_idx);
 
-    /* Safe Fetch Font Name (Melindungi dari Posisi Invalid / NULL) */
+    /* Read the font name, guarding against invalid selection. */
     if (self->drop_text_font) {
         GListModel *font_model = gtk_drop_down_get_model(GTK_DROP_DOWN(self->drop_text_font));
         guint font_idx = gtk_drop_down_get_selected(GTK_DROP_DOWN(self->drop_text_font));
@@ -180,7 +178,7 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
 
     if (!self || !filepath || !g_file_get_contents(filepath, &content, &length, NULL)) return;
 
-    /* 1. Compass Size & Opacity */
+    /* Compass size and opacity. */
     if (strstr(content, "\"c_size\":")) sscanf(strstr(content, "\"c_size\":"), "\"c_size\": %d", &c_size);
     else if (strstr(content, "\"size_px\":")) sscanf(strstr(content, "\"size_px\":"), "\"size_px\": %d", &c_size);
 
@@ -190,7 +188,7 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
     if (strstr(content, "\"c_margin_x\":")) sscanf(strstr(content, "\"c_margin_x\":"), "\"c_margin_x\": %d", &c_margin_x);
     if (strstr(content, "\"c_margin_y\":")) sscanf(strstr(content, "\"c_margin_y\":"), "\"c_margin_y\": %d", &c_margin_y);
 
-    /* 2. Text Size & Margins & Spacing */
+    /* Text size, margins, and spacing. */
     if (strstr(content, "\"t_size\":")) sscanf(strstr(content, "\"t_size\":"), "\"t_size\": %d", &t_size);
     else if (strstr(content, "\"font_size\":")) {
         double f_sz = 29.0;
@@ -216,7 +214,7 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
         t_margin_y = (int)m_y;
     }
 
-    /* 3. Compass & Text Position Dropdowns */
+    /* Compass and text position dropdowns. */
     if (strstr(content, "\"c_pos\":")) {
         const char *pos_ptr = strstr(content, "\"c_pos\":");
         char line_buf[64] = {0};
@@ -231,7 +229,7 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
         gtk_drop_down_set_selected(GTK_DROP_DOWN(self->drop_text_pos), pos_string_to_index(line_buf));
     }
 
-    /* 4. Font Family Parsing */
+    /* Font family. */
     if (strstr(content, "\"t_font\":") || strstr(content, "\"font_family\":")) {
         const char *f_ptr = strstr(content, "\"t_font\":") ? strstr(content, "\"t_font\":") : strstr(content, "\"font_family\":");
         const char *val_start = strchr(f_ptr, ':');
@@ -276,7 +274,7 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
         }
     }
 
-    /* 5. Set Spin Buttons Value */
+    /* Spin button values. */
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(self->val_compass_size), c_size);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(self->val_compass_margin_x), c_margin_x);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(self->val_compass_margin_y), c_margin_y);
@@ -288,7 +286,7 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(self->val_text_margin_y), t_margin_y);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(self->val_text_opacity), t_opacity);
 
-    /* 6. Set Checkboxes & Toggles */
+    /* Toggle buttons. */
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_c_shadow), strstr(content, "\"c_shadow\": true") != NULL);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_c_stroke), strstr(content, "\"c_stroke\": true") != NULL);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_t_bold), strstr(content, "\"t_bold\": true") != NULL);
@@ -297,7 +295,7 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_t_shadow), strstr(content, "\"t_shadow\": true") != NULL);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_t_stroke), strstr(content, "\"t_stroke\": true") != NULL);
 
-    /* 7. Text Alignment Toggle Buttons */
+    /* Text alignment. */
     if (strstr(content, "\"t_align\": \"left\"") || strstr(content, "\"alignment\": \"left\""))
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_t_align_left), TRUE);
     else if (strstr(content, "\"t_align\": \"center\"") || strstr(content, "\"alignment\": \"center\""))
@@ -305,7 +303,7 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
     else
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_t_align_right), TRUE);
 
-    /* 8. Colors Parsing */
+    /* Colors. */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     if (strstr(content, "\"c_stroke_color\": \"")) {
@@ -322,7 +320,7 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
     }
 #pragma GCC diagnostic pop
 
-    /* 9. Render Preview */
+    /* Refresh the preview. */
     stampy_render_live_preview(self);
 }
 
@@ -338,10 +336,8 @@ void stampy_save_last_state(StampyWindow *self) {
 
     stampy_save_preset_to_file(self, path);
 
-    /* Append session data (last preset name).
-     * NOTE: preferences (jpeg quality) and the locked compass folder/flag
-     * now live in the persistent config store (stampy_prefs.json, see
-     * stampy-config.c) and are deliberately NOT duplicated here. */
+    /* Session data (last preset name). Preferences and the locked compass
+       live in the config store, not here; see stampy-config.c. */
     if (self->drop_presets) {
         model = gtk_drop_down_get_model(GTK_DROP_DOWN(self->drop_presets));
         idx = gtk_drop_down_get_selected(GTK_DROP_DOWN(self->drop_presets));
@@ -350,7 +346,7 @@ void stampy_save_last_state(StampyWindow *self) {
         }
     }
 
-    /* Read existing JSON and replace closing brace with session fields */
+    /* Append session fields before the closing brace. */
     if (g_file_get_contents(path, &json_data, NULL, &error)) {
         char *last_brace = g_strrstr(json_data, "}");
         if (last_brace) {
@@ -364,10 +360,8 @@ void stampy_save_last_state(StampyWindow *self) {
     }
 }
 
-/* Restore compass folder + lock from the persistent config store.
- * This is what makes a locked compass survive app restarts: the
- * folder path is remembered on every pick/drop and the lock flag
- * on every toggle (see stampy-config.c). */
+/* Restores the compass folder and lock flag from the config store,
+   so a locked compass survives app restarts. */
 static void restore_compass_from_config(StampyWindow *self) {
     g_autofree char *compass_path = NULL;
     gboolean locked = FALSE;
@@ -402,24 +396,23 @@ void stampy_load_last_state(StampyWindow *self) {
     gsize len = 0;
     GError *error = NULL;
 
-    /* Always restore the compass from the persistent config store, even
-     * when no session file exists yet (e.g. it was deleted). */
+    /* Always restore the compass, even without a session file. */
     restore_compass_from_config(self);
 
     if (!g_file_test(path, G_FILE_TEST_EXISTS)) return;
 
     self->loading_state = TRUE;
 
-    /* Read file FIRST before loading preset settings (which triggers re-entrant saves) */
+    /* Read first; applying values triggers re-entrant saves. */
     if (!g_file_get_contents(path, &content, &len, &error)) {
         self->loading_state = FALSE;
         return;
     }
 
-    /* Load the base preset settings */
+    /* Apply the stored panel values. */
     stampy_load_preset_from_file(self, path);
 
-    /* Restore last preset selection */
+    /* Restore the selected preset. */
     if (self->drop_presets && strstr(content, "\"last_preset\":")) {
         char preset_name[256] = {0};
 #pragma GCC diagnostic push
@@ -443,7 +436,7 @@ void stampy_load_last_state(StampyWindow *self) {
 
     g_free(content);
 
-    /* Save once after all session data is restored */
+    /* Persist the restored state once. */
     self->loading_state = FALSE;
     stampy_save_last_state(self);
 }
@@ -471,10 +464,8 @@ void on_preset_dropdown_changed(GObject *gobject, GParamSpec *pspec, gpointer us
             g_signal_handlers_unblock_by_func(dropdown, on_preset_dropdown_changed, self);
         }
 
-        /* Always persist the SELECTION itself, even for entries without a
-         * preset file on disk (e.g. "Default Preset"), so the dropdown
-         * still shows the same preset after an app restart. (Suppressed
-         * automatically during state load via loading_state.) */
+        /* Persist the selection even without a preset file on disk
+           (e.g. "Default Preset"). Suppressed during state load. */
         stampy_save_last_state(self);
     }
 }

@@ -1,11 +1,12 @@
 #include "stampy-window-private.h"
 #include "stampy-preset-handlers.h"
+#include "config.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 
-/* Helper untuk mengurutkan file berdasarkan angka murni (Natural Sorting) */
+/* Sorts files by their digit sequence ("2.jpg" before "10.jpg"). */
 static gint compare_file_basenames(gconstpointer a, gconstpointer b) {
     GFile *file_a = *(GFile **)a;
     GFile *file_b = *(GFile **)b;
@@ -18,7 +19,7 @@ static gint compare_file_basenames(gconstpointer a, gconstpointer b) {
     name_a = g_file_get_basename(file_a);
     name_b = g_file_get_basename(file_b);
 
-    /* Ekstrak angka murni dari string A */
+    /* Extract digits from name A. */
     if (name_a) {
         GString *da = g_string_new("");
         for (const char *p = name_a; *p; p++) {
@@ -28,7 +29,7 @@ static gint compare_file_basenames(gconstpointer a, gconstpointer b) {
         g_string_free(da, TRUE);
     }
 
-    /* Ekstrak angka murni dari string B */
+    /* Extract digits from name B. */
     if (name_b) {
         GString *db = g_string_new("");
         for (const char *p = name_b; *p; p++) {
@@ -38,16 +39,16 @@ static gint compare_file_basenames(gconstpointer a, gconstpointer b) {
         g_string_free(db, TRUE);
     }
 
-    /* Jika kedua file memiliki angka, bandingkan nilai matematisnya */
+    /* Compare numerically when both names contain different numbers. */
     if (id_a >= 0 && id_b >= 0 && id_a != id_b) {
         return id_a - id_b;
     }
 
-    /* Jika tidak ada angka (atau angkanya persis sama), fallback ke A-Z biasa */
+    /* Fall back to alphabetical order when no usable numbers. */
     return g_utf8_collate(name_a ? name_a : "", name_b ? name_b : "");
 }
 
-/* Callback ketika seleksi baris listbox berubah */
+/* Updates the preview when the listbox selection changes. */
 static void on_listbox_selection_changed(GtkListBox *box, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
     GList *selected_rows;
@@ -82,7 +83,7 @@ static void on_listbox_selection_changed(GtkListBox *box, gpointer user_data) {
     g_list_free(selected_rows);
 }
 
-/* Callback gesture klik kiri untuk memastikan klik normal memilih single item secara bersih */
+/* Plain left-click resets the selection to the clicked row. */
 static void on_listbox_left_click(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
     GtkListBoxRow *row;
@@ -94,7 +95,7 @@ static void on_listbox_left_click(GtkGestureClick *gesture, int n_press, double 
     row = gtk_list_box_get_row_at_y(GTK_LIST_BOX(self->file_listbox), (int)y);
     if (!row) return;
 
-    /* Jika tidak menekan Shift atau Ctrl, klik biasa mereset seleksi ke baris ini saja */
+    /* Without Shift/Ctrl held, a click selects only this row. */
     if (!(state & (GDK_SHIFT_MASK | GDK_CONTROL_MASK))) {
         GList *selected = gtk_list_box_get_selected_rows(GTK_LIST_BOX(self->file_listbox));
         if (g_list_length(selected) != 1 || selected->data != row) {
@@ -155,7 +156,7 @@ void stampy_connect_panel_signals(StampyWindow *self) {
     if (self->val_text_spacing) g_signal_connect(self->val_text_spacing, "value-changed", G_CALLBACK(on_panel_setting_changed), self);
 }
 
-/* POPULATE FILE LISTBOX */
+/* Rebuilds the file listbox, sorted naturally. */
 void stampy_populate_file_listbox(StampyWindow *self) {
     GtkListBoxRow *first_row;
     guint total, i;
@@ -163,14 +164,14 @@ void stampy_populate_file_listbox(StampyWindow *self) {
 
     if (!self || !self->file_listbox) return;
 
-    /* Panggil fungsi Natural Sorting kita yang baru */
+    /* Sort before rebuilding rows. */
     if (self->image_files && self->image_files->len > 0) {
         g_ptr_array_sort(self->image_files, compare_file_basenames);
     }
 
     g_signal_handlers_block_matched(self->file_listbox, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, self);
 
-    /* Hapus elemen UI secara aman */
+    /* Remove existing rows. */
     child = gtk_widget_get_first_child(GTK_WIDGET(self->file_listbox));
     while (child != NULL) {
         GtkWidget *next = gtk_widget_get_next_sibling(child);
@@ -194,7 +195,7 @@ void stampy_populate_file_listbox(StampyWindow *self) {
 
     total = self->image_files->len;
 
-    /* Rebuild ListBox rows */
+    /* Rebuild rows from the file list. */
     for (i = 0; i < total; i++) {
         GFile *file = g_ptr_array_index(self->image_files, i);
         if (file) {
@@ -216,7 +217,7 @@ void stampy_populate_file_listbox(StampyWindow *self) {
 
     g_signal_handlers_unblock_matched(self->file_listbox, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, self);
 
-    /* Switch stack page to display the list */
+    /* Show the list page once files exist. */
     if (total > 0) {
         if (self->left_stack) {
             if (gtk_stack_get_child_by_name(GTK_STACK(self->left_stack), "page_list")) {
@@ -224,7 +225,7 @@ void stampy_populate_file_listbox(StampyWindow *self) {
             }
         }
 
-        /* Select first row by default */
+        /* Select the first row by default. */
         first_row = gtk_list_box_get_row_at_index(GTK_LIST_BOX(self->file_listbox), 0);
         if (first_row) {
             gtk_list_box_select_row(GTK_LIST_BOX(self->file_listbox), first_row);
@@ -355,7 +356,7 @@ void stampy_update_clear_button_visibility(StampyWindow *self) {
     has_asset = (self->file_compass || self->file_watermark || self->file_geolocation ||
                  (self->image_files && self->image_files->len > 0));
 
-    /* Compass lock button stays visible; lock state is indicated by its icon */
+    /* Lock state is shown by the button icon. */
     if (self->btn_compass_lock)
         gtk_widget_set_visible(self->btn_compass_lock, TRUE);
     if (self->btn_header_clear)
@@ -382,7 +383,7 @@ static void on_clear_all_clicked(GtkButton *btn, gpointer user_data) {
             self->compass_locked = FALSE;
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_compass_lock), FALSE);
         }
-        /* Forget the remembered folder too (it was not locked). */
+        /* Also forget the remembered folder (it was not locked). */
         stampy_config_set_string(STAMPY_CONFIG_KEY_COMPASS_FOLDER, "");
     }
 
@@ -403,79 +404,106 @@ static void on_clear_all_clicked(GtkButton *btn, gpointer user_data) {
     stampy_update_clear_button_visibility(self);
 }
 
-/* ==========================================================
-   WHAT'S NEW DIALOG
-   ========================================================== */
+/* Shows the "What's New" dialog. */
+#define STAMPY_RELEASE_DATE "2026-10-16"
+
+static GtkWidget *whats_new_bullet(const char *text) {
+    GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *dot = gtk_label_new("•");
+    GtkWidget *body = gtk_label_new(text);
+
+    gtk_widget_set_valign(dot, GTK_ALIGN_START);
+    gtk_widget_set_hexpand(body, TRUE);
+    gtk_label_set_xalign(GTK_LABEL(body), 0.0);
+    gtk_label_set_wrap(GTK_LABEL(body), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(body), PANGO_WRAP_WORD_CHAR);
+    gtk_box_append(GTK_BOX(row), dot);
+    gtk_box_append(GTK_BOX(row), body);
+    return row;
+}
+
+static GtkWidget *whats_new_heading(const char *text) {
+    GtkWidget *label = gtk_label_new(text);
+
+    gtk_widget_add_css_class(label, "heading");
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+    return label;
+}
+
+static void on_whats_new_close_clicked(GtkButton *button, gpointer user_data) {
+    (void)button;
+    adw_dialog_close(ADW_DIALOG(user_data));
+}
+
 static void on_whats_new_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
     AdwDialog *dialog;
-    GtkWidget *box, *heading, *content_label;
+    GtkWidget *box, *topbar, *title, *subtitle, *scroll, *content, *close_btn;
+    g_autofree char *title_text = NULL;
 
     (void)action; (void)parameter;
     if (!self) return;
-    /* Buat dialog Adwaita */
-    dialog = adw_dialog_new();
-    adw_dialog_set_title(dialog, "What's New in Stampy");
-    adw_dialog_set_content_width(dialog, 450);
-    adw_dialog_set_content_height(dialog, 400);
 
-    /* Kontainer utama dialog */
-    box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    dialog = adw_dialog_new();
+    adw_dialog_set_title(dialog, "What's New");
+    adw_dialog_set_content_width(dialog, 480);
+    adw_dialog_set_content_height(dialog, 560);
+
+    box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_widget_set_margin_start(box, 24);
     gtk_widget_set_margin_end(box, 24);
     gtk_widget_set_margin_top(box, 24);
     gtk_widget_set_margin_bottom(box, 24);
-
-    /* Judul Dialog */
-    heading = gtk_label_new("What's New in 1.4.001.beta?");
-    gtk_widget_add_css_class(heading, "title-2");
-    gtk_label_set_xalign(GTK_LABEL(heading), 0.0);
-
-    /* What's New Log */
-    content_label = gtk_label_new(NULL);
-    content_label = gtk_label_new(
-        "TETO RELEASE (0401)\n"
-        "MAJOR UPDATE!! IS OUT OF ALPHA PHASE 🎊\n"
-        "• Keyboard Shortcuts has been implemented.\n"
-        "• Compass lock has been implemented.\n"
-        "• Intterupt has been implemented.\n"
-        "• Notification has been added when export is done.\n"
-        "• New Easteregg regarding for 0401 release:3\n"
-        "• Major performance improvement.\n"
-        " Is possible by enabling all cores to do all the job\n"
-        " the performance boost can be from 30% up to 50%.\n\n"
-        "1.3.021.alpha\n"
-        "• Minor bug fix.\n\n"
-        "1.3.020.alpha\n"
-        "• Redesign Core\n"
-        "  Rethinking logic of exif.\n\n"
-        "1.2.041.alpha\n"
-        "• ExifTool Engine Integration\n"
-        "  Preserves original Date Taken & EXIF metadata with 100% accuracy (hopefully).\n"
-        "• Interrupt / Cancel Export\n"
-        "  Instantly stop batch processing with the red Cancel button.\n"
-        "• Smart Auto-Swap Coordinates\n"
-        "  Automatically detects and fixes inverted Latitude/Longitude columns.\n"
-        "• Decimal Locale Resolver\n"
-        "  Seamlessly supports comma (,) and dot (.) decimal formats from Excel.\n"
-        "• New accompany!\n"
-        "  Prof. Teto is here to watching you and motivates you during work!\n"
-    );
-    gtk_label_set_use_markup(GTK_LABEL(content_label), TRUE); /* Aktifkan agar tag <b> terbaca */
-    gtk_label_set_wrap(GTK_LABEL(content_label), TRUE);
-    gtk_label_set_xalign(GTK_LABEL(content_label), 0.0);
-
-    /* Masukkan ke dalam kotak dan tampilkan ke layar */
-    gtk_box_append(GTK_BOX(box), heading);
-    gtk_box_append(GTK_BOX(box), content_label);
-
     adw_dialog_set_child(dialog, box);
+
+    topbar = gtk_center_box_new();
+    gtk_box_append(GTK_BOX(box), topbar);
+
+    title_text = g_strdup_printf("What's New in %s?", PACKAGE_VERSION);
+    title = gtk_label_new(title_text);
+    gtk_widget_add_css_class(title, "title-2");
+    gtk_label_set_xalign(GTK_LABEL(title), 0.5);
+    gtk_label_set_wrap(GTK_LABEL(title), TRUE);
+    gtk_label_set_justify(GTK_LABEL(title), GTK_JUSTIFY_CENTER);
+    gtk_center_box_set_center_widget(GTK_CENTER_BOX(topbar), title);
+
+    close_btn = gtk_button_new_from_icon_name("window-close-symbolic");
+    gtk_widget_add_css_class(close_btn, "flat");
+    gtk_widget_add_css_class(close_btn, "circular");
+    gtk_widget_set_tooltip_text(close_btn, "Close");
+    g_signal_connect(close_btn, "clicked", G_CALLBACK(on_whats_new_close_clicked), dialog);
+    gtk_center_box_set_end_widget(GTK_CENTER_BOX(topbar), close_btn);
+
+    subtitle = gtk_label_new("Released on " STAMPY_RELEASE_DATE);
+    gtk_widget_add_css_class(subtitle, "dim-label");
+    gtk_label_set_xalign(GTK_LABEL(subtitle), 0.5);
+    gtk_box_append(GTK_BOX(box), subtitle);
+
+    scroll = gtk_scrolled_window_new();
+    gtk_widget_set_hexpand(scroll, TRUE);
+    gtk_widget_set_vexpand(scroll, TRUE);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_box_append(GTK_BOX(box), scroll);
+
+    content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_hexpand(content, TRUE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), content);
+
+    gtk_box_append(GTK_BOX(content), whats_new_heading("Changes"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Preferences dialog in the hamburger menu (Ctrl+,) with export settings."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("JPEG compress quality with slider and typeable value."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Preferences, compass folder and lock, and the selected preset are remembered across restarts."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Export thread controls: use all CPU cores automatically or set a manual worker count."));
+    gtk_box_append(GTK_BOX(content), whats_new_heading("Fixes"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed a crash when closing the Preferences dialog."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed a crash on startup in the settings loader."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed settings and the selected preset being reset on startup."));
+
     adw_dialog_present(dialog, GTK_WIDGET(self));
 }
 
-/* ==========================================================
-   KEYBOARD SHORTCUT ACTION CALLBACKS
-   ========================================================== */
+/* Keyboard shortcut action callbacks. */
 static void on_watermark_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
     (void)action; (void)parameter;
@@ -615,12 +643,12 @@ void stampy_setup_actions_and_menus(StampyWindow *self) {
     g_signal_connect(act_rem_sel, "activate", G_CALLBACK(on_remove_selected_activated), self);
     g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_rem_sel));
 
-    /* PENDAFTARAN ACTION "WHAT'S NEW" */
+    /* Register the "What's New" action. */
     act_whats_new = g_simple_action_new("whats-new", NULL);
     g_signal_connect(act_whats_new, "activate", G_CALLBACK(on_whats_new_activated), self);
     g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_whats_new));
 
-    /* --- KEYBOARD SHORTCUT ACTIONS --- */
+    /* Keyboard shortcut actions. */
     act_watermark = g_simple_action_new("watermark", NULL);
     g_signal_connect(act_watermark, "activate", G_CALLBACK(on_watermark_activated), self);
     g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_watermark));

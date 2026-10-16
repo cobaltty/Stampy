@@ -4,7 +4,7 @@ Release:        1%{?dist}
 Summary:        Photo stamping and geolocation utility
 
 License:        GPL-3.0-or-later
-URL:            https://github.com/cobaltty/stampy
+URL:            https://github.com/cobaltty/Stampy
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  meson

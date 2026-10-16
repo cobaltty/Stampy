@@ -4,14 +4,14 @@
 #include <stdlib.h>
 #include <math.h>
 
-/* HELPER SAKTI: Memaksa pemisah desimal menjadi TITIK (.)
-   agar ExifTool tidak bingung walau OS menggunakan Locale Indonesia (Koma) */
+/* Formats a double with a dot decimal separator regardless of locale,
+   so ExifTool parses it correctly. */
 static gchar *format_double_safe(double val, int decimals) {
     char buf[128];
     char *p;
     snprintf(buf, sizeof(buf), "%.*f", decimals, val);
 
-    /* Timpa paksa setiap koma menjadi titik */
+    /* Replace any comma with a dot. */
     for (p = buf; *p; p++) {
         if (*p == ',') *p = '.';
     }
@@ -56,7 +56,7 @@ gboolean stampy_metadata_write_gps_and_heading(const char *source_image_path,
     gchar *tags_from = NULL;
     gchar *cmd = NULL;
 
-    /* String penampung angka desimal yang sudah dijamin memakai Titik */
+    /* Decimal strings, always dot-separated. */
     gchar *lat_str = NULL;
     gchar *lon_str = NULL;
 
@@ -76,13 +76,11 @@ gboolean stampy_metadata_write_gps_and_heading(const char *source_image_path,
     lon_ref = (lon >= 0.0) ? 'E' : 'W';
     quoted_target = g_shell_quote(target_image_path);
 
-    /* Ubah angka desimal ke teks menggunakan fungsi Helper kita (8 angka di belakang koma) */
     lat_str = format_double_safe(abs_lat, 8);
     lon_str = format_double_safe(abs_lon, 8);
 
-    /* COPY ALL EXIF - Menggunakan TagsFromFile.
-       Hapus "Orientation" krn pixbuf sdh meluruskan pixel aslinya.
-       Hapus GPS lama (EXIF + XMP) biar tidak konflik dengan GPS baru yang kita tulis. */
+    /* Copy all EXIF from the source, then drop Orientation (pixels are
+       already straightened) and old GPS tags (replaced below). */
     if (source_image_path && *source_image_path != '\0') {
         gchar *quoted_source = g_shell_quote(source_image_path);
         tags_from = g_strdup_printf("-TagsFromFile %s \"-all:all\" \"-Orientation=\" \"-gps:all=\" \"-XMP:GPS:all=\"", quoted_source);
@@ -97,7 +95,7 @@ gboolean stampy_metadata_write_gps_and_heading(const char *source_image_path,
 
         if (clean_heading < 0.0) clean_heading += 360.0;
 
-        /* Ubah azimuth kompas ke teks (2 angka di belakang koma) */
+        /* Compass azimuth with 2 decimals. */
         head_str = format_double_safe(clean_heading, 2);
 
         cmd = g_strdup_printf(
@@ -117,7 +115,6 @@ gboolean stampy_metadata_write_gps_and_heading(const char *source_image_path,
         );
     }
 
-    /* Bersihkan memori */
     g_free(lat_str);
     g_free(lon_str);
     g_free(quoted_target);
@@ -142,8 +139,7 @@ gboolean stampy_metadata_write_gps_and_heading(const char *source_image_path,
     return success;
 }
 
-/* Apply GPS data from CSV file to all images in a folder using exiftool -csv.
-   This leverages exiftool's built-in CSV parsing for robust handling of coordinates. */
+/* Applies GPS data from a CSV file to all images in a folder via exiftool -csv. */
 gboolean stampy_apply_csv_gps_to_folder(const char *csv_path, const char *image_folder,
                                          char **error_msg) {
     char *exif_cmd;

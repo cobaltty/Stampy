@@ -6,7 +6,7 @@
 #include <glib/gstdio.h>
 #include <math.h>
 
-/* Forward Declarations Internal */
+/* Forward declarations. */
 static void on_btn_compass_clicked(GtkButton *btn, gpointer user_data);
 static void on_btn_docx_clicked(GtkButton *btn, gpointer user_data);
 static void on_btn_xlsx_clicked(GtkButton *btn, gpointer user_data);
@@ -94,7 +94,7 @@ static double parse_azimuth_string(const char *str) {
     return g_ascii_strtod(buf, NULL);
 }
 
-/* Parser XLSX C Native Presisi (Mendukung Shared Strings & Auto-Swap) */
+/* Parses an XLSX file via its raw XML parts (shared strings, auto-swapped lat/lon). */
 void parse_excel_file(StampyWindow *self, GFile *file) {
     char *path = NULL;
     char cmd[1024];
@@ -127,7 +127,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
 
     stampy_append_log(self, "[INFO] Reading Excel structure by cell reference...");
 
-    /* 1. BONGKAR BRANKAS TEKS (SHARED STRINGS) EXCEL */
+    /* 1. Read the shared-strings table. */
     shared_strings = g_ptr_array_new_with_free_func(g_free);
     snprintf(cmd, sizeof(cmd), "unzip -p \"%s\" xl/sharedStrings.xml 2>/dev/null", path);
     fp = popen(cmd, "r");
@@ -158,7 +158,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
         g_string_free(ss_buf, TRUE);
     }
 
-    /* 2. PARSING LEMBAR KERJA UTAMA */
+    /* 2. Parse the main worksheet. */
     snprintf(cmd, sizeof(cmd), "unzip -p \"%s\" xl/worksheets/sheet1.xml 2>/dev/null", path);
     fp = popen(cmd, "r");
 
@@ -289,9 +289,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
     }
 }
 
-/* ==========================================================
-   HELPER IMPORT IMAGES (Folder / Multiple Files)
-   ========================================================== */
+/* Imports dropped image files and folders. */
 static void stampy_add_image_files(StampyWindow *self, GSList *files) {
     GSList *l;
     int added_count = 0;
@@ -317,9 +315,7 @@ static void stampy_add_image_files(StampyWindow *self, GSList *files) {
     }
 }
 
-/* ==========================================================
-   DRAG & DROP HANDLERS
-   ========================================================== */
+/* Drag-and-drop handlers. */
 static gboolean on_file_listbox_drop(GtkDropTarget *target, const GValue *value, double x, double y, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
     (void)target; (void)x; (void)y;
@@ -363,7 +359,7 @@ static gboolean on_compass_drop(GtkDropTarget *target, const GValue *value, doub
                 }
                 g_free(basename);
 
-                /* Remember across restarts (see stampy-config.c). */
+                /* Persisted, restored on next launch. */
                 {
                     g_autofree char *dir_path = g_file_get_path(file);
                     stampy_config_set_string(STAMPY_CONFIG_KEY_COMPASS_FOLDER,
@@ -500,9 +496,7 @@ static gboolean on_json_drop(GtkDropTarget *target, const GValue *value, double 
     return FALSE;
 }
 
-/* ==========================================================
-   FILE PICKER DIALOG HANDLERS (HANYA UNTUK TOMBOL ASET)
-   ========================================================== */
+/* Asset file-picker handlers. */
 
 static void on_compass_folder_selected(GObject *source, GAsyncResult *res, gpointer user_data) {
     GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
@@ -521,7 +515,7 @@ static void on_compass_folder_selected(GObject *source, GAsyncResult *res, gpoin
         }
         g_free(basename);
 
-        /* Remember across restarts (see stampy-config.c). */
+        /* Persisted, restored on next launch. */
         {
             g_autofree char *dir_path = g_file_get_path(folder);
             stampy_config_set_string(STAMPY_CONFIG_KEY_COMPASS_FOLDER,
@@ -627,9 +621,7 @@ static void on_btn_xlsx_clicked(GtkButton *btn, gpointer user_data) {
     stampy_open_geolocation_picker(STAMPY_WINDOW(user_data));
 }
 
-/* ==========================================================
-   REGISTER DROP TARGETS & SIGNALS
-   ========================================================== */
+/* Registers drop targets and button signals. */
 void stampy_setup_file_handlers_and_dnd(StampyWindow *self) {
     GtkDropTarget *target_listbox;
     GtkDropTarget *target_compass;

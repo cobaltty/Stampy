@@ -5,33 +5,20 @@
   <project_license>GPL-3.0-or-later</project_license>
 
   <name>Stampy</name>
-  <summary>Stampy is an app that placing watermark in bulk such as compass and text from a file, it also support metadata editing with exiftool</summary>
+  <summary>Batch-stamp photos with compass and text overlays</summary>
   <description>
-    <p>No description</p>
+    <p>Stampy stamps hundreds of photos at once with compass roses and text taken from your data files — built for field documentation such as site surveys.</p>
+    <p>Overlay a compass rose per photo matched to its azimuth, watermark text per photo id from a DOCX file, and coordinates plus heading from an XLSX table. Exports run in parallel with original EXIF preserved and GPS written back.</p>
+    <p>Note: Stampy is a specialized tool for compass/DOCX/XLSX field workflows and may not suit general photo editing.</p>
   </description>
 
-  <developer id="tld.vendor">
-    <name>Developer name</name>
+  <developer id="com.cobaltty.stampy">
+    <name>cobaltty</name>
   </developer>
 
-  <!-- Required: Should be a link to the upstream homepage for the component -->
-  <url type="homepage">https://example.org/</url>
-  <!-- Recommended: It is highly recommended for open-source projects to display the source code repository -->
-  <url type="vcs-browser">https://example.org/repository</url>
-  <!-- Should point to the software's bug tracking system, for users to report new bugs -->
-  <url type="bugtracker">https://example.org/issues</url>
-  <!-- Should link a FAQ page for this software, to answer some of the most-asked questions in detail -->
-  <!-- URLs of this type should point to a webpage where users can submit or modify translations of the upstream project -->
-  <url type="translate">https://example.org/translate</url>
-  <url type="faq">https://example.org/faq</url>
-  <!-- Should provide a web link to an online user's reference, a software manual or help page -->
-  <url type="help">https://example.org/help</url>
-  <!-- URLs of this type should point to a webpage showing information on how to donate to the described software project -->
-  <url type="donation">https://example.org/donate</url>
-  <!-- This could for example be an HTTPS URL to an online form or a page describing how to contact the developer -->
-  <url type="contact">https://example.org/contact</url>
-  <!-- URLs of this type should point to a webpage showing information on how to contribute to the described software project -->
-  <url type="contribute">https://example.org/contribute</url>
+  <url type="homepage">https://github.com/cobaltty/Stampy</url>
+  <url type="vcs-browser">https://github.com/cobaltty/Stampy</url>
+  <url type="bugtracker">https://github.com/cobaltty/Stampy/issues</url>
 
   <translation type="gettext">stampy</translation>
   <!-- All graphical applications having a desktop file must have this tag in the MetaInfo.
@@ -58,16 +45,21 @@
   </screenshots>
 
   <releases>
-    <release version="1.1.110alpha" date="2026-08-6">
-      <url type="details">https://example.org/changelog.html#version_1.0.1</url>
-      <description translate="no">
-        <p>Release description</p>
-        Replace gexiv2 with exiftool
+    <release version="1.5.000.beta" date="2026-10-16">
+      <description>
+        <p>Preferences, persistent settings, and export thread controls.</p>
+        <p>Changes:</p>
         <ul>
-          <li>List of changes</li>
-          Enchance Core experiences.
-          bugs are expected.
-          <li>List of changes</li>
+          <li>New Preferences dialog in the hamburger menu (Ctrl+,) with export settings</li>
+          <li>JPEG compress quality with slider and typeable value</li>
+          <li>Preferences, compass folder and lock, and the selected preset are remembered across restarts</li>
+          <li>Export thread controls: use all CPU cores automatically or set a manual worker count</li>
+        </ul>
+        <p>Fixes:</p>
+        <ul>
+          <li>Fixed a crash when closing the Preferences dialog</li>
+          <li>Fixed a crash on startup in the settings loader</li>
+          <li>Fixed settings and the selected preset being reset on startup</li>
         </ul>
       </description>
     </release>

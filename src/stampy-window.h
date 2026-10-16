@@ -95,7 +95,7 @@ void stampy_render_live_preview(StampyWindow *self);
 
 void on_add_images_action_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data);
 
-/* State Management */
+/* Session state. */
 void stampy_scan_and_populate_presets(StampyWindow *self);
 void stampy_save_preset_to_file(StampyWindow *self, const char *filepath);
 void stampy_load_preset_from_file(StampyWindow *self, const char *filepath);
@@ -103,7 +103,7 @@ void stampy_save_last_state(StampyWindow *self);
 void stampy_load_last_state(StampyWindow *self);
 void stampy_set_progress(StampyWindow *self, double fraction, gboolean visible);
 
-/* Geolocation Helpers */
+/* DOCX/XLSX data lookups. */
 gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char **out_text, char **out_azimuth);
 gboolean stampy_lookup_geolocation_data(StampyWindow *self, int photo_id, GeolocationEntry *out_entry);
 void format_geolocation_text(const GeolocationEntry *entry, char *lat_str, char *lon_str, double *compass_deg);

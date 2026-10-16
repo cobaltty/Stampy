@@ -29,11 +29,10 @@ int
 main (int   argc,
       char *argv[])
 {
-    /* Deklarasi Variabel Wajib di Paling Atas (ISO C90) */
     g_autoptr(StampyApplication) app = NULL;
     int ret;
 
-    /* Environment Flags Anti-Crash Glycin & Cairo Renderer */
+    /* Avoid Glycin sandbox and GSK renderer issues. */
     g_setenv ("GLYCIN_ENABLE_SANDBOX", "0", TRUE);
     g_setenv ("GSK_RENDERER", "cairo", TRUE);
 

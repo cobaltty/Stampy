@@ -147,7 +147,7 @@ static void stampy_window_class_init(StampyWindowClass *klass) {
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_menu);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_header_clear);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_header_export);
-    gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_header_cancel); /* <-- BIND TOMBOL CANCEL */
+    gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_header_cancel);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, preview_stack);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, img_preview);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, txt_terminal_output);
@@ -155,7 +155,7 @@ static void stampy_window_class_init(StampyWindowClass *klass) {
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, img_decoration);
 }
 
-/* Prof Teto easter egg — raw GStreamer pipeline, avoids decodebin3 */
+/* Plays the hidden audio clip through a minimal GStreamer pipeline. */
 #include <gst/gst.h>
 
 typedef struct {
@@ -251,7 +251,7 @@ static void stampy_on_compass_lock_toggled(GtkToggleButton *btn, gpointer user_d
     self->compass_locked = gtk_toggle_button_get_active(btn);
     if (btn)
         gtk_button_set_icon_name(GTK_BUTTON(btn), self->compass_locked ? "padlock2-symbolic" : "padlock-open-symbolic");
-    /* Persist immediately so the lock survives app restarts. */
+    /* Persisted, restored on next launch. */
     stampy_config_set_bool(STAMPY_CONFIG_KEY_COMPASS_LOCKED, self->compass_locked);
 }
 
@@ -282,7 +282,7 @@ static void stampy_window_init(StampyWindow *self) {
 
     if (self->btn_menu) {
         GMenu *menu_model = g_menu_new();
-      g_menu_append(menu_model, "What's New", "win.whats-new"); /* <-- BARIS BARU */
+        g_menu_append(menu_model, "What's New", "win.whats-new");
         g_menu_append(menu_model, "Preferences", "win.preferences");
         g_menu_append(menu_model, "Keyboard Shortcuts", "app.shortcuts");
         g_menu_append(menu_model, "About Stampy", "app.about");
@@ -296,7 +296,7 @@ static void stampy_window_init(StampyWindow *self) {
     stampy_connect_panel_signals(self);
     stampy_populate_system_fonts(self);
 
-    /* Compass lock button */
+    /* Compass lock button. */
     if (self->btn_compass_lock) {
         self->compass_locked = FALSE;
         gtk_button_set_icon_name(GTK_BUTTON(self->btn_compass_lock), "padlock-open-symbolic");
@@ -304,7 +304,7 @@ static void stampy_window_init(StampyWindow *self) {
             G_CALLBACK(stampy_on_compass_lock_toggled), self);
     }
 
-    /* Prof Teto easter egg — click to play teto.mp3 */
+    /* Hidden audio clip on decoration click. */
     if (self->img_decoration) {
         GtkGesture *click = gtk_gesture_click_new();
         gtk_widget_set_cursor_from_name(GTK_WIDGET(self->img_decoration), "pointer");
@@ -312,7 +312,7 @@ static void stampy_window_init(StampyWindow *self) {
         gtk_widget_add_controller(GTK_WIDGET(self->img_decoration), GTK_EVENT_CONTROLLER(click));
     }
 
-    /* Preset scan + state load (saves stay suppressed via loading_state). */
+    /* Load presets and last state; saves stay suppressed until done. */
     stampy_scan_and_populate_presets(self);
     stampy_load_last_state(self);
     self->loading_state = FALSE;

@@ -23,7 +23,7 @@ stampy_set_jpeg_quality (StampyWindow *self, int quality)
   stampy_config_set_int (STAMPY_CONFIG_KEY_JPEG_QUALITY, quality);
 }
 
-/* Plain get/set adapters so rows can share one implementation. */
+/* Get/set adapters so rows can share one implementation. */
 static int
 get_jpeg_quality_value (void)
 {
@@ -48,7 +48,7 @@ set_thread_count_value (int value)
   stampy_config_set_export_threads (value);
 }
 
-/* A slider kept in two-way sync with a typeable spin button. */
+/* Slider kept in two-way sync with a typeable spin button. */
 typedef struct {
   GtkWidget *scale;
   GtkWidget *spin;
@@ -66,8 +66,7 @@ int_row_apply (IntRowData *row, int value)
   if (row == NULL || row->set_value == NULL)
     return;
 
-  /* set_*() persists to the config file immediately,
-   * so no explicit save is needed here. */
+  /* Persisted via the config store; no explicit save needed. */
   row->set_value (value);
 }
 
@@ -82,7 +81,7 @@ on_int_scale_changed (GtkRange *range, gpointer user_data)
 
   value = (int) (gtk_range_get_value (range) + 0.5);
 
-  /* Mirror into the spin button without re-triggering its handler. */
+  /* Mirror into the spin button without re-triggering it. */
   if (gtk_spin_button_get_value_as_int (GTK_SPIN_BUTTON (row->spin)) != value)
     {
       g_signal_handlers_block_by_func (row->spin, on_int_spin_changed, row);
@@ -104,7 +103,7 @@ on_int_spin_changed (GtkSpinButton *spin, gpointer user_data)
 
   value = gtk_spin_button_get_value_as_int (spin);
 
-  /* Mirror into the slider without re-triggering its handler. */
+  /* Mirror into the slider without re-triggering it. */
   if ((int) (gtk_range_get_value (GTK_RANGE (row->scale)) + 0.5) != value)
     {
       g_signal_handlers_block_by_func (row->scale, on_int_scale_changed, row);
@@ -115,8 +114,8 @@ on_int_spin_changed (GtkSpinButton *spin, gpointer user_data)
   int_row_apply (row, value);
 }
 
-/* Builds an AdwActionRow with a slider + typeable spin in its suffix.
- * Returns the row (transfer none, owned by @group). */
+/* Builds a row with a slider plus typeable spin in its suffix.
+ * Returns the row (owned by @group). */
 static GtkWidget *
 add_int_slider_row (AdwPreferencesGroup *group,
                     const char *title,
@@ -174,7 +173,7 @@ add_int_slider_row (AdwPreferencesGroup *group,
   g_free (tip);
   gtk_box_append (GTK_BOX (suffix_box), scale);
 
-  /* Typeable field, kept in sync with the slider. */
+  /* Typeable field, synced with the slider. */
   spin = gtk_spin_button_new_with_range ((double) min_value,
                                          (double) max_value,
                                          1.0);
@@ -225,7 +224,7 @@ on_use_all_cores_changed (GObject *object, GParamSpec *pspec, gpointer user_data
 
   stampy_config_set_bool (STAMPY_CONFIG_KEY_EXPORT_USE_ALL_CORES, active);
 
-  /* Dim the manual thread-count row while automatic mode is on. */
+  /* Dim the manual row while automatic mode is on. */
   if (user_data != NULL)
     gtk_widget_set_sensitive (GTK_WIDGET (user_data), !active);
 }
@@ -307,12 +306,7 @@ stampy_show_preferences (StampyWindow *self)
                     G_CALLBACK (on_use_all_cores_changed),
                     threads_row);
 
-  /* NOTE: no "closed" -> unref handler here. Dialogs created with
-   * adw_*_dialog_new() are owned by the presentation machinery
-   * (same pattern as the What's New dialog); unref'ing on "closed"
-   * double-frees and crashes with "Finalizing AdwPreferencesDialog
-   * but it still has children left". The builder-based shortcuts
-   * dialog needs its unref only because it takes its own ref via
-   * g_object_ref_sink() before dropping the GtkBuilder. */
+  /* Programmatic dialogs need no close-handler unref (unlike the
+   * builder-based shortcuts dialog); unref'ing here double-frees. */
   adw_dialog_present (dialog, GTK_WIDGET (self));
 }

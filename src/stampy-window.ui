@@ -30,7 +30,7 @@
                 <child type="end">
                   <object class="GtkBox">
                     <property name="spacing">6</property>
-                    <!-- TOMBOL CANCEL (Tersembunyi secara default) -->
+                    <!-- Cancel button (hidden unless an export is running) -->
                     <child>
                       <object class="GtkButton" id="btn_header_cancel">
                         <property name="icon-name">media-playback-stop-symbolic</property>
@@ -39,7 +39,7 @@
                         <style><class name="destructive-action"/></style>
                       </object>
                     </child>
-                    <!-- TOMBOL EXPORT -->
+                      <!-- Export button -->
                     <child>
                       <object class="GtkButton" id="btn_header_export">
                         <property name="icon-name">export-symbolic</property>
@@ -72,7 +72,7 @@
                 <property name="margin-start">16</property>
                 <property name="margin-end">16</property>
 
-                <!-- LEFT COLUMN (320px Fixed) -->
+                <!-- Left column -->
                 <child>
                   <object class="GtkBox">
                     <property name="orientation">1</property>
@@ -131,10 +131,10 @@
                       </object>
                     </child>
 
-                    <!-- COMPASS + LOCK (overlay approach) -->
+                    <!-- Compass button with lock overlay -->
                     <child>
                       <object class="GtkOverlay">
-                        <!-- TOMBOL UTAMA (Memenuhi seluruh lebar 320px) -->
+                        <!-- Main button (full width) -->
                         <child>
                           <object class="GtkButton" id="btn_compass">
                             <property name="height-request">50</property>
@@ -154,7 +154,7 @@
                           </object>
                         </child>
 
-                        <!-- TOMBOL LOCK (Menempel di sebelah kiri atas tombol compass) -->
+                        <!-- Lock toggle, overlaid on the left edge -->
                         <child type="overlay">
                           <object class="GtkToggleButton" id="btn_compass_lock">
                             <property name="halign">start</property>
@@ -208,7 +208,7 @@
                   </object>
                 </child>
 
-                <!-- RIGHT AREA -->
+                <!-- Right area -->
                 <child>
                   <object class="GtkBox">
                     <property name="orientation">1</property>
@@ -221,7 +221,7 @@
                         <property name="spacing">12</property>
                         <property name="vexpand">true</property>
 
-                        <!-- PREVIEW -->
+                        <!-- Preview -->
                         <child>
                           <object class="GtkFrame">
                             <style><class name="card"/></style>
@@ -265,7 +265,7 @@
                           </object>
                         </child>
 
-                        <!-- SETTINGS PANEL -->
+                        <!-- Settings panel -->
                         <child>
                           <object class="GtkBox" id="box_right_panel">
                             <property name="orientation">1</property>
@@ -285,7 +285,7 @@
                                     <property name="margin-start">12</property>
                                     <property name="margin-end">12</property>
 
-                                    <!-- SECTION COMPASS (Baris 1) -->
+                                    <!-- Compass row 1 -->
                                     <child>
                                       <object class="GtkBox">
                                         <property name="spacing">8</property>
@@ -314,14 +314,14 @@
                                             <child><object class="GtkToggleButton" id="btn_c_align_right"><property name="icon-name">format-justify-right-symbolic</property><property name="group">btn_c_align_left</property></object></child>
                                           </object>
                                         </child>
-                                        <!-- Compass Size SpinButton -->
+                                        <!-- Compass size -->
                                         <child>
                                           <object class="GtkSpinButton" id="val_compass_size"><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">500</property><property name="step-increment">1</property></object></property><property name="value">140</property></object>
                                         </child>
                                       </object>
                                     </child>
 
-                                    <!-- SECTION COMPASS (Baris 2) -->
+                                    <!-- Compass row 2 -->
                                     <child>
                                       <object class="GtkBox">
                                         <property name="spacing">8</property>
@@ -335,7 +335,7 @@
                                         <child><object class="GtkColorButton" id="btn_c_stroke_color"><property name="tooltip-text">Compass Stroke Color</property><property name="rgba">rgb(0,0,0)</property></object></child>
                                         <child><object class="GtkBox"><property name="hexpand">true</property></object></child>
 
-                                        <!-- Margin X (expand-horizontal-symbolic) -->
+                                        <!-- Margin X -->
                                         <child>
                                           <object class="GtkBox">
                                             <property name="spacing">4</property>
@@ -343,7 +343,7 @@
                                             <child><object class="GtkSpinButton" id="val_compass_margin_x"><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">200</property><property name="step-increment">1</property></object></property><property name="value">20</property></object></child>
                                           </object>
                                         </child>
-                                        <!-- Margin Y (expand-vertical-symbolic) -->
+                                        <!-- Margin Y -->
                                         <child>
                                           <object class="GtkBox">
                                             <property name="spacing">4</property>
@@ -351,7 +351,7 @@
                                             <child><object class="GtkSpinButton" id="val_compass_margin_y"><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">200</property><property name="step-increment">1</property></object></property><property name="value">20</property></object></child>
                                           </object>
                                         </child>
-                                        <!-- Opacity (transparent-background-symbolic) -->
+                                        <!-- Opacity -->
                                         <child>
                                           <object class="GtkBox">
                                             <property name="spacing">4</property>
@@ -364,7 +364,7 @@
 
                                     <child><object class="GtkSeparator"/></child>
 
-                                    <!-- SECTION TEXT (Baris 1) -->
+                                    <!-- Text row 1 -->
                                     <child>
                                       <object class="GtkBox">
                                         <property name="spacing">8</property>
@@ -393,19 +393,19 @@
                                             <child><object class="GtkToggleButton" id="btn_t_align_right"><property name="icon-name">format-justify-right-symbolic</property><property name="group">btn_t_align_left</property><property name="active">true</property></object></child>
                                           </object>
                                         </child>
-                                        <!-- Text Size SpinButton -->
+                                        <!-- Text size -->
                                         <child>
                                           <object class="GtkSpinButton" id="val_text_size"><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">100</property><property name="step-increment">1</property></object></property><property name="value">29</property></object>
                                         </child>
                                       </object>
                                     </child>
 
-                                    <!-- SECTION TEXT (Baris 2) -->
+                                    <!-- Text row 2 -->
                                     <child>
                                       <object class="GtkBox">
                                         <property name="spacing">8</property>
                                         <child><object class="GtkBox"><property name="hexpand">true</property></object></child>
-                                        <!-- LINE SPACING -->
+                                        <!-- Line spacing -->
                                         <child>
                                           <object class="GtkBox">
                                             <property name="spacing">4</property>
@@ -413,7 +413,7 @@
                                             <child><object class="GtkSpinButton" id="val_text_spacing"><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">100</property><property name="step-increment">1</property></object></property><property name="value">12</property></object></child>
                                           </object>
                                         </child>
-                                        <!-- Text Margin X -->
+                                        <!-- Text margin X -->
                                         <child>
                                           <object class="GtkBox">
                                             <property name="spacing">4</property>
@@ -421,7 +421,7 @@
                                             <child><object class="GtkSpinButton" id="val_text_margin_x"><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">200</property><property name="step-increment">1</property></object></property><property name="value">20</property></object></child>
                                           </object>
                                         </child>
-                                        <!-- Text Margin Y -->
+                                        <!-- Text margin Y -->
                                         <child>
                                           <object class="GtkBox">
                                             <property name="spacing">4</property>
@@ -429,7 +429,7 @@
                                             <child><object class="GtkSpinButton" id="val_text_margin_y"><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">200</property><property name="step-increment">1</property></object></property><property name="value">20</property></object></child>
                                           </object>
                                         </child>
-                                        <!-- Text Opacity -->
+                                        <!-- Text opacity -->
                                         <child>
                                           <object class="GtkBox">
                                             <property name="spacing">4</property>
@@ -440,7 +440,7 @@
                                       </object>
                                     </child>
 
-                                    <!-- TEXT STYLE (DROPDOWN FONT MELEBAR & TOMBOL FORMAT MEPEET KE KANAN) -->
+                                    <!-- Text style -->
                                     <child>
                                       <object class="GtkBox">
                                         <property name="spacing">6</property>
@@ -479,11 +479,11 @@
                                       </object>
                                     </child>
 
-                                    <!-- PRESET BAR (GROUPED & LINKED) -->
+                                    <!-- Preset bar -->
                                     <child>
                                       <object class="GtkBox">
                                         <property name="spacing">6</property>
-                                        <!-- MAIN PRESET ACTIONS LINKED GROUP -->
+                                        <!-- Preset select/save actions -->
                                         <child>
                                           <object class="GtkBox">
                                             <style><class name="linked"/></style>
@@ -528,7 +528,7 @@
                                           </object>
                                         </child>
 
-                                        <!-- IMPORT/EXPORT LINKED GROUP -->
+                                        <!-- Preset import/export -->
                                         <child>
                                           <object class="GtkBox">
                                             <style><class name="linked"/></style>
@@ -549,12 +549,10 @@
                                       </object>
                                     </child>
 
-                                    <!-- ============================================== -->
-                                    <!-- DEKORASI GAMBAR PERMANEN                       -->
-                                    <!-- ============================================== -->
+                                    <!-- Decoration image -->
                                     <child>
                                       <object class="GtkBox">
-                                        <property name="halign">3</property> <!-- 3 = GTK_ALIGN_END (Rata Kanan) -->
+                                        <property name="halign">3</property> <!-- End-aligned -->
                                         <property name="margin-top">12</property>
                                         <child>
                                           <object class="GtkPicture" id="img_decoration">
@@ -578,7 +576,7 @@
                       </object>
                     </child>
 
-                    <!-- TERMINAL OUTPUT -->
+                    <!-- Terminal output -->
                     <child>
                       <object class="GtkFrame">
                         <style><class name="card"/></style>

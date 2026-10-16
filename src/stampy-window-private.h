@@ -89,7 +89,7 @@ struct _StampyWindow {
     gboolean loading_state;
 };
 
-/* Core Window Methods */
+/* Window setup. */
 StampyWindow *stampy_window_new(GtkApplication *app);
 void stampy_show_toast(StampyWindow *self, const char *title);
 void stampy_setup_actions_and_menus(StampyWindow *self);
@@ -99,7 +99,7 @@ void stampy_connect_panel_signals(StampyWindow *self);
 void stampy_render_live_preview(StampyWindow *self);
 void on_add_images_action_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data);
 
-/* Keyboard Shortcut Action Helpers */
+/* Shortcut and menu actions. */
 void stampy_open_compass_picker(StampyWindow *self);
 void stampy_open_watermark_picker(StampyWindow *self);
 void stampy_open_geolocation_picker(StampyWindow *self);
@@ -107,7 +107,7 @@ void stampy_start_export(StampyWindow *self);
 void stampy_cancel_export(StampyWindow *self);
 void stampy_toggle_compass_lock(StampyWindow *self);
 
-/* Utility & List Helpers */
+/* List and panel helpers. */
 void stampy_populate_system_fonts(StampyWindow *self);
 void stampy_populate_file_listbox(StampyWindow *self);
 void stampy_add_file_or_directory(StampyWindow *self, GFile *file, int *added_count);
@@ -115,7 +115,7 @@ void stampy_append_log(StampyWindow *self, const char *message);
 void stampy_open_image_picker(StampyWindow *self);
 
 
-/* State Management */
+/* Session state. */
 void stampy_scan_and_populate_presets(StampyWindow *self);
 void stampy_save_preset_to_file(StampyWindow *self, const char *filepath);
 void stampy_load_preset_from_file(StampyWindow *self, const char *filepath);
@@ -123,49 +123,43 @@ void stampy_save_last_state(StampyWindow *self);
 void stampy_load_last_state(StampyWindow *self);
 void stampy_set_progress(StampyWindow *self, double fraction, gboolean visible);
 
-/* Clear Button Visibility */
+/* Header clear-button visibility. */
 void stampy_update_clear_button_visibility(StampyWindow *self);
 
-/* Preferences */
+/* Preferences dialog. */
 void stampy_show_preferences(StampyWindow *self);
 int stampy_get_jpeg_quality(StampyWindow *self);
 void stampy_set_jpeg_quality(StampyWindow *self, int quality);
 
-/* Persistent config store (~/.config/stampy_prefs.json).
- * Single source of truth for all preferences, current and future.
- * Values are saved to disk immediately on every set_*() call.
+/* Persistent config store (~/.config/stampy_prefs.json). Single source of
+ * truth for all preferences; values are written through on every set call.
  * Main-thread use only. */
 #define STAMPY_CONFIG_KEY_JPEG_QUALITY   "jpeg-quality"   /* int 1..100, default 90 */
 #define STAMPY_CONFIG_KEY_COMPASS_LOCKED "compass-locked"  /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_COMPASS_FOLDER "compass-folder"  /* string path, default "" */
 #define STAMPY_CONFIG_KEY_EXPORT_USE_ALL_CORES "export-use-all-cores" /* bool, default TRUE */
 #define STAMPY_CONFIG_KEY_EXPORT_THREAD_COUNT  "export-thread-count"  /* int, 0 = auto (all cores) */
-/* To add a future preference: #define a new key here, then use the
- * stampy_config_get/set_*() helpers. No other plumbing needed. */
+/* New preferences only need a key here plus the get/set helpers below. */
 int stampy_config_get_int(const char *key, int fallback);
 void stampy_config_set_int(const char *key, int value);
 gboolean stampy_config_get_bool(const char *key, gboolean fallback);
 void stampy_config_set_bool(const char *key, gboolean value);
 char *stampy_config_get_string(const char *key, const char *fallback); /* transfer full */
 void stampy_config_set_string(const char *key, const char *value);
-/* Resolved worker-thread count for parallel export: all logical cores when
- * "export-use-all-cores" is set (default), otherwise the stored
- * "export-thread-count" clamped to [1, n_cpus]. Always >= 1. */
+/* Worker-thread count for export: all cores when automatic mode is on,
+ * otherwise the stored count clamped to [1, n_cpus]. Always >= 1. */
 int stampy_config_get_export_threads(void);
-/* Store a worker-thread count, clamped to [1, n_cpus]. */
+/* Stores a worker-thread count clamped to [1, n_cpus]. */
 void stampy_config_set_export_threads(int value);
 
-/* CSV Export for exiftool batch GPS */
+/* CSV helpers for batch GPS export via exiftool. */
 FILE *stampy_geo_csv_open(const char *csv_path, char **error_msg);
 void stampy_geo_csv_append_row(FILE *fp, const char *exported_path, const GeolocationEntry *entry);
 void stampy_geo_csv_close(FILE *fp);
 
-/* Geolocation Helpers */
+/* DOCX/XLSX data lookups. */
 gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char **out_text, char **out_azimuth);
 gboolean stampy_lookup_geolocation_data(StampyWindow *self, int photo_id, GeolocationEntry *out_entry);
 void format_geolocation_text(const GeolocationEntry *entry, char *lat_str, char *lon_str, double *compass_deg);
-
-/*else*/
-
 
 G_END_DECLS

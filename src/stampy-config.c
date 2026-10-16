@@ -1,20 +1,9 @@
-/* stampy-config.c
+/* Persistent config store (~/.config/stampy_prefs.json).
  *
- * Persistent config store for Stampy preferences.
- *
- * Single source of truth for ALL preferences (current and future):
- *   ~/.config/stampy_prefs.json
- *
- * Contrast with stampy_last.json, which only keeps per-session UI state
- * (panel values, last selected preset). Anything the user expects to
- * survive an app restart AND that is not per-session belongs here.
- *
- * How to add a future preference:
- *   1. Pick a stable kebab-case key, document it in stampy-window-private.h
- *      next to the other STAMPY_CONFIG_KEY_* defines.
- *   2. Read it with stampy_config_get_int/bool/string (pass a fallback).
- *   3. Write it with stampy_config_set_int/bool/string (saves immediately).
- * No other plumbing needed. Main-thread use only.
+ * Holds preferences (as opposed to stampy_last.json, which holds
+ * per-session UI state). To add a preference: define a key in
+ * stampy-window-private.h and use the get/set helpers below.
+ * Main-thread use only.
  */
 
 #include "stampy-window-private.h"
@@ -25,14 +14,12 @@
 #define STAMPY_PREFS_FILENAME "stampy_prefs.json"
 #define STAMPY_LAST_FILENAME "stampy_last.json"
 
-/* In-memory cache, loaded lazily on first access. Main thread only. */
+/* In-memory cache, loaded on first access. */
 static JsonObject *prefs_obj = NULL;
 static char *prefs_path = NULL;
 static gboolean prefs_loaded = FALSE;
 
-/* ------------------------------------------------------------------ */
-/* Save                                                                */
-/* ------------------------------------------------------------------ */
+/* Save. */
 
 static void
 prefs_save (void)
@@ -62,9 +49,7 @@ prefs_save (void)
   g_object_unref (gen);
 }
 
-/* ------------------------------------------------------------------ */
-/* One-time migration from the legacy stampy_last.json session file    */
-/* ------------------------------------------------------------------ */
+/* One-time import from the legacy session file. */
 
 static void
 prefs_migrate_from_last_state (void)
@@ -77,7 +62,7 @@ prefs_migrate_from_last_state (void)
   if (!g_file_get_contents (last_path, &content, &len, NULL) || !content)
     return;
 
-  /* jpeg_quality (was appended to stampy_last.json by older versions). */
+  /* Older versions appended these keys to stampy_last.json. */
   if (!json_object_has_member (prefs_obj, STAMPY_CONFIG_KEY_JPEG_QUALITY) &&
       strstr (content, "\"jpeg_quality\":") != NULL)
     {
@@ -91,14 +76,14 @@ prefs_migrate_from_last_state (void)
         }
     }
 
-  /* compass_locked. */
+  /* Lock flag. */
   if (!json_object_has_member (prefs_obj, STAMPY_CONFIG_KEY_COMPASS_LOCKED))
     {
       json_object_set_boolean_member (prefs_obj, STAMPY_CONFIG_KEY_COMPASS_LOCKED,
                                       strstr (content, "\"compass_locked\": true") != NULL);
     }
 
-  /* compass_folder. */
+  /* Compass folder. */
   if (!json_object_has_member (prefs_obj, STAMPY_CONFIG_KEY_COMPASS_FOLDER) &&
       strstr (content, "\"compass_folder\": \"") != NULL)
     {
@@ -112,9 +97,7 @@ prefs_migrate_from_last_state (void)
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Lazy load                                                           */
-/* ------------------------------------------------------------------ */
+/* Load on first access. */
 
 static void
 prefs_ensure_loaded (void)
@@ -143,10 +126,8 @@ prefs_ensure_loaded (void)
               JsonObject *loaded = json_node_get_object (root);
               if (loaded != NULL)
                 {
-                  /* NOTE: JsonObject is a BOXED type, not a GObject.
-                   * It must be managed with json_object_ref/unref only;
-                   * g_object_unref() on it segfaults inside libgobject
-                   * (reads boxed memory as a GTypeClass pointer). */
+                  /* JsonObject is boxed; only json_object_ref/unref apply.
+                     g_object_unref() segfaults here. */
                   json_object_unref (prefs_obj);
                   prefs_obj = json_object_ref (loaded);
                 }
@@ -162,16 +143,13 @@ prefs_ensure_loaded (void)
     }
   else
     {
-      /* First run with the config store: carry over anything the old
-       * session file already knew, then persist it. */
+      /* First run: carry over anything the old session file knew. */
       prefs_migrate_from_last_state ();
       prefs_save ();
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Public typed API                                                    */
-/* ------------------------------------------------------------------ */
+/* Typed key-value access. Every setter writes through to disk. */
 
 int
 stampy_config_get_int (const char *key, int fallback)
@@ -276,9 +254,7 @@ stampy_config_set_string (const char *key, const char *value)
   prefs_save ();
 }
 
-/* ------------------------------------------------------------------ */
-/* Export worker-thread count                                          */
-/* ------------------------------------------------------------------ */
+/* Export worker-thread count. */
 
 static int
 system_cpu_count (void)

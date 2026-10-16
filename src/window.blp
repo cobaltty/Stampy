@@ -15,13 +15,11 @@ template $StampyWindow : Adw.ApplicationWindow {
       spacing: 16;
       margin-top: 16; margin-bottom: 16; margin-start: 16; margin-end: 16;
 
-      /* =========================================
-         KOLOM KIRI: Drop Area & 3 Tombol Import
-         ========================================= */
+      /* Left column: drop area and import buttons */
       Box {
         orientation: vertical;
         spacing: 12;
-        width-request: 320; /* Diperlebar biar 3 tombolnya panjang! */
+        width-request: 320;
 
         Frame {
           styles ["card"]
@@ -43,35 +41,31 @@ template $StampyWindow : Adw.ApplicationWindow {
           }
         }
 
-        /* 3 Tombol ini ID-nya udah siap diculik ke C buat ganti teks jadi Filepath! */
+        /* Import buttons (labels are updated with file paths from C) */
         Button btn_compass { label: "Add Compass"; icon-name: "folder-symbolic"; height-request: 50; }
         Button btn_watermark { label: "Add Watermark(.docx)"; icon-name: "text-x-generic-symbolic"; height-request: 50; }
         Button btn_geolocation { label: "Add Geolocation(.xls)"; icon-name: "x-office-spreadsheet-symbolic"; height-request: 50; }
       }
 
-      /* =========================================
-         KOLOM TENGAH: Live Preview (Portrait)
-         ========================================= */
+      /* Middle column: live preview */
       Frame {
         styles ["card"]
-        width-request: 280; /* Dijepit lebarnya biar dia panjang ke bawah! */
+        width-request: 280;
         hexpand: false;
 
         Picture img_preview {
           vexpand: true;
-          content-fit: contain; /* Biar fotonya ga gepeng walau areanya panjang! */
+          content-fit: contain;
         }
       }
 
-      /* =========================================
-         KOLOM KANAN: Settings & Terminal Output
-         ========================================= */
+      /* Right column: settings and terminal output */
       Box {
         orientation: vertical;
         spacing: 12;
-        hexpand: true; /* Dia yang bakal ngisi sisa kekosongan layar! */
+        hexpand: true;
 
-        /* Panel Setting (Atas) */
+        /* Settings panel */
         Frame {
           styles ["card"]
           Box {
@@ -112,7 +106,7 @@ template $StampyWindow : Adw.ApplicationWindow {
           }
         }
 
-        /* Output Terminal Log (Bawah) */
+        /* Terminal log output */
         Frame {
           styles ["card"]
           vexpand: true;

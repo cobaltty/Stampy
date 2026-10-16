@@ -52,24 +52,22 @@ typedef struct {
     gboolean is_finished;
 } UIProgressUpdateData;
 
-/* Shared context for parallel export — read-only during export, safe to share across threads */
+/* Shared export context. Read-only during export, safe across threads. */
 typedef struct {
     StampyWindow *self;
     char *folder_path;
     ExportSettingsSnapshot snapshot;
     guint total;
-    volatile gint completed;   /* atomic counter */
+    volatile gint completed;   /* atomic progress counter */
 } ExportWorkerContext;
 
-/* Per-image work item */
+/* One image to export. */
 typedef struct {
     ExportWorkerContext *ctx;
     guint index;
 } ExportWorkItem;
 
-/* ========================================================================= */
-/* --- HELPER FUNCTIONS ---                                                  */
-/* ========================================================================= */
+/* Rendering helpers. */
 
 static int extract_id_from_filename(const char *filename) {
     char *basename;
@@ -357,7 +355,7 @@ static GdkPixbuf *render_stamped_pixbuf_from_snapshot(GFile *image_file, const E
 
     orig_basename = g_file_get_basename(image_file);
 
-    /* 1. Render Compass Overlay */
+    /* Compass overlay. */
     if (snap->has_compass && snap->file_compass) {
         int comp_w = (int)(snap->comp_w * scale);
         double opacity = snap->comp_opacity;
@@ -400,7 +398,7 @@ static GdkPixbuf *render_stamped_pixbuf_from_snapshot(GFile *image_file, const E
         }
     }
 
-    /* 2. Render Text Overlay */
+    /* Text overlay. */
     if (snap->font_size > 0 && custom_text && *custom_text != '\0') {
         double font_size = snap->font_size * scale;
         double opacity = snap->text_opacity;
@@ -594,9 +592,7 @@ void stampy_render_live_preview(StampyWindow *window_self) {
     g_list_free(selected_rows);
 }
 
-/* ========================================================================= */
-/* --- NEW INTERRUPTABLE EXPORT ENGINE ---                                   */
-/* ========================================================================= */
+/* Cancellable background export engine. */
 
 static gboolean update_ui_progress_idle(gpointer user_data) {
     UIProgressUpdateData *data = (UIProgressUpdateData *)user_data;
@@ -637,7 +633,7 @@ static void send_progress_to_ui(StampyWindow *window_self, double fraction, gboo
     g_idle_add(update_ui_progress_idle, data);
 }
 
-/* --- PARALLEL EXPORT WORKER (one per image) --- */
+/* Exports one image on a thread-pool worker. */
 static void export_image_worker(gpointer data, gpointer user_data) {
     ExportWorkItem *item = (ExportWorkItem *)data;
     ExportWorkerContext *ctx = (ExportWorkerContext *)user_data;
@@ -760,7 +756,7 @@ static void export_image_worker(gpointer data, gpointer user_data) {
     g_free(out_path);
     g_free(item);
 
-    /* Update progress */
+    /* Report progress. */
     int done = g_atomic_int_add(&ctx->completed, 1) + 1;
     if (done % 10 == 0 || done == (int)total) {
         char *msg = g_strdup_printf("[%d/%u] photos processed...", done, total);
@@ -769,7 +765,7 @@ static void export_image_worker(gpointer data, gpointer user_data) {
     }
 }
 
-/* --- Uninhibit + Send Notification (runs on main thread via g_idle_add) --- */
+/* Releases the sleep inhibitor and notifies on completion (main thread). */
 typedef struct {
     GtkApplication *app;
     guint cookie;
@@ -780,12 +776,12 @@ typedef struct {
 static gboolean on_export_finished_idle(gpointer user_data) {
     ExportFinishData *data = (ExportFinishData *)user_data;
 
-    /* Uninhibit sleep */
+    /* Release the sleep inhibitor. */
     if (data->app && data->cookie > 0) {
         gtk_application_uninhibit(data->app, data->cookie);
     }
 
-    /* Send desktop notification */
+    /* Desktop notification. */
     if (data->app) {
         GNotification *notif = g_notification_new("Stampy Export Complete");
         char *body = g_strdup_printf("All %u photos have been exported successfully!", data->completed);
@@ -825,7 +821,7 @@ static gpointer export_worker_thread(gpointer user_data) {
 
     send_progress_to_ui(window_self, 0.0, TRUE, "Exporting photos in background...", TRUE, FALSE);
 
-    /* --- PARALLEL EXPORT via GThreadPool --- */
+    /* Export in parallel with a thread pool. */
     {
         ExportWorkerContext ctx;
         GThreadPool *pool;
@@ -839,11 +835,11 @@ static gpointer export_worker_thread(gpointer user_data) {
 
         ctx.self = window_self;
         ctx.folder_path = folder_path;
-        ctx.snapshot = td->snapshot;  /* struct copy — read-only during export */
+        ctx.snapshot = td->snapshot;  /* read-only during export */
         ctx.total = total;
         ctx.completed = 0;
 
-        /* max_threads comes from Preferences (all cores, or a manual limit) */
+        /* Thread count comes from Preferences (all cores or a manual limit). */
         pool = g_thread_pool_new(export_image_worker, &ctx, max_threads, FALSE, &pool_err);
         if (!pool_err) {
             for (i = 0; i < total; i++) {
@@ -853,7 +849,7 @@ static gpointer export_worker_thread(gpointer user_data) {
                 item->index = i;
                 g_thread_pool_push(pool, item, NULL);
             }
-            /* Wait for all tasks to finish */
+            /* Wait for all tasks to finish. */
             g_thread_pool_free(pool, FALSE, TRUE);
         } else {
             send_progress_to_ui(window_self, 0.0, FALSE, "[ERROR] Failed to create thread pool.", FALSE, TRUE);
@@ -866,10 +862,10 @@ static gpointer export_worker_thread(gpointer user_data) {
     send_progress_to_ui(window_self, 1.0, FALSE, msg, FALSE, TRUE);
     g_free(msg);
 
-    /* Cleanup — snapshot was struct-copied into ctx, but we still own td->snapshot */
+    /* The snapshot was copied into ctx; td->snapshot is still ours to free. */
     free_export_snapshot(&td->snapshot);
 
-    /* Uninhibit sleep + send completion notification on main thread */
+    /* Uninhibit and notify on the main thread. */
     {
         GtkApplication *app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(window_self)));
         if (app) {
@@ -912,7 +908,7 @@ static void on_export_folder_selected(GObject *source, GAsyncResult *res, gpoint
     td->self = window_self;
     td->export_folder = folder;
 
-    /* Inhibit sleep during export */
+    /* Keep the display awake during export. */
     {
         GtkApplication *app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(window_self)));
         if (app) {

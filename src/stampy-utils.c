@@ -4,7 +4,7 @@
 #include <string.h>
 #include <math.h>
 
-/* Helper lokal untuk mengambil angka murni dari string (contoh: "2501.jpg" -> "2501") */
+/* Extracts the digit sequence from a string ("2501.jpg" -> "2501"). */
 static char *extract_pure_id(const char *input) {
     GString *str;
     char *dup;
@@ -31,13 +31,13 @@ static char *extract_pure_id(const char *input) {
     return dup;
 }
 
-/* Helper pembersih nilai Azimuth dari kolom 'Azh' Excel */
+/* Normalizes a raw azimuth value into the [0, 360) range. */
 static double parse_clean_azimuth_from_excel(double raw_azh) {
     double val = fabs(raw_azh);
     return fmod(val, 360.0);
 }
 
-/* 1. Format Geolocation Text & Compass Deg (Format Koma FastStone) */
+/* Formats coordinates with comma decimals plus the compass heading. */
 void format_geolocation_text(const GeolocationEntry *entry, char *lat_str, char *lon_str, double *compass_deg) {
     double abs_lat;
     double abs_lon;
@@ -68,17 +68,17 @@ void format_geolocation_text(const GeolocationEntry *entry, char *lat_str, char 
     }
 }
 
-/* 2. Safe Lookup Geolocation Data (ONLY EXECUTES IF XLSX IS LOADED) */
+/* Looks up geolocation data. Only runs when an XLSX file is loaded. */
 gboolean stampy_lookup_geolocation_data(StampyWindow *self, int photo_id, GeolocationEntry *out_entry) {
     gpointer val = NULL;
     char id_str[64];
 
-    /* STRICT GUARD: Only proceed if an XLSX file was explicitly loaded */
+    /* Only proceed if an XLSX file was explicitly loaded. */
     if (!self || !self->file_geolocation || !self->geo_table || photo_id <= 0) {
         return FALSE;
     }
 
-    /* Convert int photo_id to string key so g_str_hash does not crash */
+    /* Hash keys are strings, so convert the numeric id first. */
     snprintf(id_str, sizeof(id_str), "%d", photo_id);
     val = g_hash_table_lookup(self->geo_table, id_str);
 
@@ -95,7 +95,7 @@ gboolean stampy_lookup_geolocation_data(StampyWindow *self, int photo_id, Geoloc
     return FALSE;
 }
 
-/* 3. Lookup DOCX Watermark Text Data - SMART DYNAMIC PARSER (Anti-Leaking) */
+/* Looks up watermark text and azimuth for a photo id in the loaded DOCX. */
 gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char **out_text, char **out_azimuth) {
     char *docx_path;
     char cmd[1024];
@@ -143,7 +143,7 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char 
         return FALSE;
     }
 
-    /* A. STATE MACHINE XML PARSER (Tahan Shift+Enter) */
+    /* Extract plain text: <w:t> runs are content, <w:br/> and </w:p> are line breaks. */
     plain_text = g_string_new("");
     ptr = xml_content->str;
 
@@ -169,7 +169,7 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char 
     }
     g_string_free(xml_content, TRUE);
 
-    /* B. PEMBERSIHAN BARIS KOSONG */
+    /* Drop empty lines. */
     raw_lines = g_strsplit(plain_text->str, "\n", -1);
     g_string_free(plain_text, TRUE);
 
@@ -186,12 +186,12 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char 
     }
     g_strfreev(raw_lines);
 
-    /* C. PENCARIAN ID & EKSTRAKSI TEKS DINAMIS (Anti-Leaking) */
+    /* Find the id, then collect following lines until the next id block. */
     while (lines[i] != NULL) {
         char *line_id = extract_pure_id(lines[i]);
 
         if (line_id && g_strcmp0(line_id, target_id) == 0) {
-            /* Pastikan baris ini MEMANG murni ID, bukan teks deskripsi yang kebetulan mengandung angka ID */
+            /* Skip description lines that merely contain the id digits. */
             gboolean is_pure_id = TRUE;
             for (const char *p = lines[i]; *p; p++) {
                 if (!g_ascii_isdigit(*p) && !g_ascii_isspace(*p)) {
@@ -206,15 +206,15 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char 
                 continue;
             }
 
-            /* EKSTRAKSI DINAMIS: Ambil baris ke bawah sampai menabrak angka murni (ID berikutnya) */
+            /* Collect following lines until the next photo id block. */
             GString *result_text = g_string_new("");
             int j = i + 1;
             int count = 0;
 
-            /* Mengambil maksimal 6 baris data untuk berjaga-jaga */
+            /* Collect at most 6 data lines as a safeguard. */
             while (lines[j] != NULL && count < 6) {
 
-                /* Deteksi apakah baris ini adalah "Angka Murni" (ID blok foto berikutnya) */
+                /* A digits-only line starts the next photo block. */
                 gboolean has_digit = FALSE;
                 gboolean only_digits_and_spaces = TRUE;
                 for (const char *p = lines[j]; *p; p++) {
@@ -227,7 +227,6 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char 
                 }
 
                 if (has_digit && only_digits_and_spaces) {
-                    /* MENABRAK ID FOTO SELANJUTNYA -> BERHENTI MENARIK TEKS! */
                     break;
                 }
 
@@ -245,7 +244,7 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char 
                 g_string_free(result_text, TRUE);
             }
 
-            /* Untuk Kompas Azimuth (selalu diambil dari baris ke-2 / index i+2) */
+            /* Compass azimuth is always the second line below the id. */
             if (out_azimuth) {
                 *out_azimuth = (count >= 2 && lines[i+2]) ? g_strdup(lines[i+2]) : g_strdup("");
             }
@@ -263,7 +262,7 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char 
     return found;
 }
 
-/* 4. Append Terminal Log Helper */
+/* Appends a line to the terminal log view. */
 void stampy_append_log(StampyWindow *self, const char *message) {
     GtkTextBuffer *buffer;
     GtkTextIter end;
@@ -281,7 +280,7 @@ void stampy_append_log(StampyWindow *self, const char *message) {
     gtk_text_buffer_delete_mark(buffer, mark);
 }
 
-/* 5. Populate System Fonts Helper */
+/* Fills the font dropdown with installed system fonts. */
 void stampy_populate_system_fonts(StampyWindow *self) {
     PangoFontMap *font_map;
     PangoFontFamily **families;
@@ -303,7 +302,7 @@ void stampy_populate_system_fonts(StampyWindow *self) {
     gtk_drop_down_set_model(GTK_DROP_DOWN(self->drop_text_font), G_LIST_MODEL(string_list));
 }
 
-/* 6. Add File or Directory Helper */
+/* Adds an image file, recursing into directories and skipping duplicates. */
 void stampy_add_file_or_directory(StampyWindow *self, GFile *file, int *added_count) {
     GFileType type;
 
@@ -359,11 +358,7 @@ void stampy_add_file_or_directory(StampyWindow *self, GFile *file, int *added_co
     }
 }
 
-/* ========================================================================= */
-/* 7. ASYNC IMAGE PICKER (Aman dari Crash GTK4)                              */
-/* ========================================================================= */
-
-/* Callback yang dipanggil secara otomatis oleh GTK4 ketika user selesai memilih gambar */
+/* Async image picker. */
 static void on_images_opened(GObject *source, GAsyncResult *res, gpointer user_data) {
     GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
     StampyWindow *self = STAMPY_WINDOW(user_data);
@@ -396,7 +391,7 @@ static void on_images_opened(GObject *source, GAsyncResult *res, gpointer user_d
     }
 }
 
-/* Fungsi Pemanggil Dialog (Aman dari Freeze / Crash di Wayland/X11) */
+/* Opens the image picker dialog. */
 void stampy_open_image_picker(StampyWindow *self) {
     GtkFileDialog *dialog;
     GtkFileFilter *filter;
@@ -422,7 +417,7 @@ void stampy_open_image_picker(StampyWindow *self) {
     gtk_file_dialog_open_multiple(dialog, GTK_WINDOW(self), NULL, on_images_opened, self);
 }
 
-/* Action dari Menu Klik Kanan (win.add-images) */
+/* Handles the win.add-images action from shortcuts and context menu. */
 void on_add_images_action_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
     (void)action; (void)parameter;
