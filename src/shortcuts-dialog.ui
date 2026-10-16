@@ -3,11 +3,97 @@
   <object class="AdwShortcutsDialog" id="shortcuts_dialog">
     <child>
       <object class="AdwShortcutsSection">
-        <property name="title" translatable="yes">Shortcuts</property>
+        <property name="title" translatable="yes">Import</property>
+        <child>
+          <object class="AdwShortcutsItem">
+            <property name="title" translatable="yes" context="shortcut window">Add Images</property>
+            <property name="action-name">win.add-images</property>
+            <property name="accelerator">Alt I</property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwShortcutsItem">
+            <property name="title" translatable="yes" context="shortcut window">Add Watermark</property>
+            <property name="action-name">win.watermark</property>
+            <property name="accelerator">Alt W</property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwShortcutsItem">
+            <property name="title" translatable="yes" context="shortcut window">Add Geolocation</property>
+            <property name="action-name">win.geolocation</property>
+            <property name="accelerator">Alt G</property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwShortcutsItem">
+            <property name="title" translatable="yes" context="shortcut window">Add Compass</property>
+            <property name="action-name">win.compass</property>
+            <property name="accelerator">Alt C</property>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="AdwShortcutsSection">
+        <property name="title" translatable="yes">Compass</property>
+        <child>
+          <object class="AdwShortcutsItem">
+            <property name="title" translatable="yes" context="shortcut window">Lock Compass</property>
+            <property name="action-name">win.compass-lock</property>
+            <property name="accelerator">Alt Shift C</property>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="AdwShortcutsSection">
+        <property name="title" translatable="yes">Export</property>
+        <child>
+          <object class="AdwShortcutsItem">
+            <property name="title" translatable="yes" context="shortcut window">Export</property>
+            <property name="action-name">win.export</property>
+            <property name="accelerator">Ctrl E</property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwShortcutsItem">
+            <property name="title" translatable="yes" context="shortcut window">Cancel Export</property>
+            <property name="action-name">win.cancel-export</property>
+            <property name="accelerator">Ctrl C</property>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="AdwShortcutsSection">
+        <property name="title" translatable="yes">General</property>
+        <child>
+          <object class="AdwShortcutsItem">
+            <property name="title" translatable="yes" context="shortcut window">Preferences</property>
+            <property name="action-name">win.preferences</property>
+            <property name="accelerator">Ctrl+,</property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwShortcutsItem">
+            <property name="title" translatable="yes" context="shortcut window">Remove All</property>
+            <property name="action-name">win.remove-all</property>
+            <property name="accelerator">Ctrl D</property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwShortcutsItem">
+            <property name="title" translatable="yes" context="shortcut window">Select Preset</property>
+            <property name="action-name">win.select-preset</property>
+            <property name="accelerator">Ctrl S</property>
+          </object>
+        </child>
         <child>
           <object class="AdwShortcutsItem">
             <property name="title" translatable="yes" context="shortcut window">Show Shortcuts</property>
             <property name="action-name">app.shortcuts</property>
+            <property name="accelerator">Ctrl+?</property>
           </object>
         </child>
         <child>

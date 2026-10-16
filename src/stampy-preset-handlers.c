@@ -328,12 +328,124 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
 
 void stampy_save_last_state(StampyWindow *self) {
     g_autofree char *path = g_build_filename(g_get_user_config_dir(), "stampy_last.json", NULL);
+    GListModel *model;
+    guint idx;
+    const char *preset_name = "";
+    char *json_data = NULL;
+    GError *error = NULL;
+
+    if (!self || self->loading_state) return;
+
     stampy_save_preset_to_file(self, path);
+
+    /* Append session data (last preset name).
+     * NOTE: preferences (jpeg quality) and the locked compass folder/flag
+     * now live in the persistent config store (stampy_prefs.json, see
+     * stampy-config.c) and are deliberately NOT duplicated here. */
+    if (self->drop_presets) {
+        model = gtk_drop_down_get_model(GTK_DROP_DOWN(self->drop_presets));
+        idx = gtk_drop_down_get_selected(GTK_DROP_DOWN(self->drop_presets));
+        if (model && idx != GTK_INVALID_LIST_POSITION && GTK_IS_STRING_LIST(model)) {
+            preset_name = gtk_string_list_get_string(GTK_STRING_LIST(model), idx);
+        }
+    }
+
+    /* Read existing JSON and replace closing brace with session fields */
+    if (g_file_get_contents(path, &json_data, NULL, &error)) {
+        char *last_brace = g_strrstr(json_data, "}");
+        if (last_brace) {
+            *last_brace = '\0';
+            g_autofree char *extended = g_strdup_printf(
+                "%s,\n  \"last_preset\": \"%s\"\n}\n",
+                json_data, preset_name ? preset_name : "");
+            g_file_set_contents(path, extended, -1, &error);
+        }
+        g_free(json_data);
+    }
+}
+
+/* Restore compass folder + lock from the persistent config store.
+ * This is what makes a locked compass survive app restarts: the
+ * folder path is remembered on every pick/drop and the lock flag
+ * on every toggle (see stampy-config.c). */
+static void restore_compass_from_config(StampyWindow *self) {
+    g_autofree char *compass_path = NULL;
+    gboolean locked = FALSE;
+
+    if (!self) return;
+
+    compass_path = stampy_config_get_string(STAMPY_CONFIG_KEY_COMPASS_FOLDER, "");
+    locked = stampy_config_get_bool(STAMPY_CONFIG_KEY_COMPASS_LOCKED, FALSE);
+
+    if (compass_path && *compass_path && g_file_test(compass_path, G_FILE_TEST_IS_DIR)) {
+        g_clear_object(&self->file_compass);
+        self->file_compass = g_file_new_for_path(compass_path);
+        if (self->lbl_compass) {
+            g_autofree char *basename = g_path_get_basename(compass_path);
+            gtk_label_set_text(GTK_LABEL(self->lbl_compass), basename);
+        }
+        stampy_update_clear_button_visibility(self);
+    }
+
+    if (locked && self->btn_compass_lock) {
+        self->compass_locked = TRUE;
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_compass_lock), TRUE);
+    } else if (self->btn_compass_lock) {
+        self->compass_locked = FALSE;
+        gtk_button_set_icon_name(GTK_BUTTON(self->btn_compass_lock), "padlock-open-symbolic");
+    }
 }
 
 void stampy_load_last_state(StampyWindow *self) {
     g_autofree char *path = g_build_filename(g_get_user_config_dir(), "stampy_last.json", NULL);
-    if (g_file_test(path, G_FILE_TEST_EXISTS)) stampy_load_preset_from_file(self, path);
+    char *content = NULL;
+    gsize len = 0;
+    GError *error = NULL;
+
+    /* Always restore the compass from the persistent config store, even
+     * when no session file exists yet (e.g. it was deleted). */
+    restore_compass_from_config(self);
+
+    if (!g_file_test(path, G_FILE_TEST_EXISTS)) return;
+
+    self->loading_state = TRUE;
+
+    /* Read file FIRST before loading preset settings (which triggers re-entrant saves) */
+    if (!g_file_get_contents(path, &content, &len, &error)) {
+        self->loading_state = FALSE;
+        return;
+    }
+
+    /* Load the base preset settings */
+    stampy_load_preset_from_file(self, path);
+
+    /* Restore last preset selection */
+    if (self->drop_presets && strstr(content, "\"last_preset\":")) {
+        char preset_name[256] = {0};
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-security"
+        sscanf(strstr(content, "\"last_preset\": \""), "\"last_preset\": \"%255[^\"]\"", preset_name);
+#pragma GCC diagnostic pop
+        if (preset_name[0]) {
+            GListModel *model = gtk_drop_down_get_model(GTK_DROP_DOWN(self->drop_presets));
+            guint n = g_list_model_get_n_items(model);
+            for (guint i = 0; i < n; i++) {
+                const char *name = gtk_string_list_get_string(GTK_STRING_LIST(model), i);
+                if (g_strcmp0(name, preset_name) == 0) {
+                    g_signal_handlers_block_by_func(self->drop_presets, on_preset_dropdown_changed, self);
+                    gtk_drop_down_set_selected(GTK_DROP_DOWN(self->drop_presets), i);
+                    g_signal_handlers_unblock_by_func(self->drop_presets, on_preset_dropdown_changed, self);
+                    break;
+                }
+            }
+        }
+    }
+
+    g_free(content);
+
+    /* Save once after all session data is restored */
+    self->loading_state = FALSE;
+    stampy_save_last_state(self);
 }
 
 void on_preset_dropdown_changed(GObject *gobject, GParamSpec *pspec, gpointer user_data) {
@@ -358,6 +470,12 @@ void on_preset_dropdown_changed(GObject *gobject, GParamSpec *pspec, gpointer us
 
             g_signal_handlers_unblock_by_func(dropdown, on_preset_dropdown_changed, self);
         }
+
+        /* Always persist the SELECTION itself, even for entries without a
+         * preset file on disk (e.g. "Default Preset"), so the dropdown
+         * still shows the same preset after an app restart. (Suppressed
+         * automatically during state load via loading_state.) */
+        stampy_save_last_state(self);
     }
 }
 

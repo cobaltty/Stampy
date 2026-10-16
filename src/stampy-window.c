@@ -1,5 +1,7 @@
 #include "stampy-window-private.h"
 #include <gtk/gtk.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 void stampy_show_toast(StampyWindow *self, const char *title) {
     AdwToast *toast;
@@ -100,6 +102,7 @@ static void stampy_window_class_init(StampyWindowClass *klass) {
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, file_listbox);
 
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_compass);
+    gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_compass_lock);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_watermark);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_geolocation);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, lbl_compass);
@@ -149,10 +152,124 @@ static void stampy_window_class_init(StampyWindowClass *klass) {
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, img_preview);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, txt_terminal_output);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, val_text_spacing);
+    gtk_widget_class_bind_template_child(widget_class, StampyWindow, img_decoration);
+}
+
+/* Prof Teto easter egg — raw GStreamer pipeline, avoids decodebin3 */
+#include <gst/gst.h>
+
+typedef struct {
+    GstElement *pipeline;
+    guint bus_watch_id;
+    char *tmp_path;
+} TetoPlayer;
+
+static gboolean on_teto_bus(GstBus *bus, GstMessage *msg, gpointer user_data) {
+    TetoPlayer *player = (TetoPlayer *)user_data;
+    (void)bus;
+
+    switch (GST_MESSAGE_TYPE(msg)) {
+    case GST_MESSAGE_ERROR: {
+        GError *err = NULL;
+        char *dbg = NULL;
+        gst_message_parse_error(msg, &err, &dbg);
+        g_printerr("[Teto] GStreamer error: %s\n", err ? err->message : "unknown");
+        if (dbg) g_printerr("[Teto] debug: %s\n", dbg);
+        g_clear_error(&err);
+        g_free(dbg);
+        gst_element_set_state(player->pipeline, GST_STATE_NULL);
+        gst_object_unref(player->pipeline);
+        g_free(player->tmp_path);
+        g_free(player);
+        return FALSE;
+    }
+    case GST_MESSAGE_EOS:
+        gst_element_set_state(player->pipeline, GST_STATE_NULL);
+        gst_object_unref(player->pipeline);
+        g_free(player->tmp_path);
+        g_free(player);
+        return FALSE;
+    default:
+        break;
+    }
+    return TRUE;
+}
+
+static void stampy_play_teto(StampyWindow *self) {
+    GBytes *bytes;
+    char *tmp_path;
+    char *desc;
+    int fd;
+    gsize size;
+    const void *data;
+    GError *err = NULL;
+    GstBus *bus;
+    TetoPlayer *player;
+
+    if (!self) return;
+
+    bytes = g_resources_lookup_data("/com/cobaltty/stampy/teto.mp3", 0, NULL);
+    if (!bytes) return;
+
+    data = g_bytes_get_data(bytes, &size);
+    tmp_path = g_build_filename(g_get_tmp_dir(), "stampy-teto-XXXXXX.mp3", NULL);
+    fd = g_mkstemp_full(tmp_path, O_WRONLY | O_CREAT, 0600);
+    if (fd < 0) { g_free(tmp_path); g_bytes_unref(bytes); return; }
+
+    write(fd, data, size);
+    close(fd);
+    g_bytes_unref(bytes);
+
+    desc = g_strdup_printf(
+        "filesrc location=\"%s\" ! queue ! decodebin name=db "
+        "db. ! audioconvert ! audioresample ! autoaudiosink",
+        tmp_path);
+
+    player = g_new0(TetoPlayer, 1);
+    player->pipeline = gst_parse_launch(desc, &err);
+    g_free(desc);
+
+    if (err || !player->pipeline) {
+        g_printerr("[Teto] Pipeline error: %s\n", err ? err->message : "unknown");
+        g_clear_error(&err);
+        g_free(player);
+        g_free(tmp_path);
+        return;
+    }
+
+    bus = gst_element_get_bus(player->pipeline);
+    player->bus_watch_id = gst_bus_add_watch(bus, on_teto_bus, player);
+    gst_object_unref(bus);
+
+    player->tmp_path = tmp_path;
+    gst_element_set_state(player->pipeline, GST_STATE_PLAYING);
+}
+
+static void stampy_on_compass_lock_toggled(GtkToggleButton *btn, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    if (!self) return;
+    self->compass_locked = gtk_toggle_button_get_active(btn);
+    if (btn)
+        gtk_button_set_icon_name(GTK_BUTTON(btn), self->compass_locked ? "padlock2-symbolic" : "padlock-open-symbolic");
+    /* Persist immediately so the lock survives app restarts. */
+    stampy_config_set_bool(STAMPY_CONFIG_KEY_COMPASS_LOCKED, self->compass_locked);
+}
+
+void stampy_toggle_compass_lock(StampyWindow *self) {
+    if (!self || !self->btn_compass_lock) return;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_compass_lock),
+                                 !gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_compass_lock)));
 }
 
 static void stampy_window_init(StampyWindow *self) {
     gtk_widget_init_template(GTK_WIDGET(self));
+
+    /* Suppress re-entrant saves for the WHOLE init sequence. This must be
+     * set before any setup below: e.g. stampy_populate_system_fonts()
+     * replaces a dropdown model which emits notify::selected, and without
+     * this guard that would overwrite stampy_last.json with defaults
+     * (wiping the saved preset selection) before it is ever loaded. */
+    self->loading_state = TRUE;
 
     apply_custom_css();
 
@@ -166,6 +283,8 @@ static void stampy_window_init(StampyWindow *self) {
     if (self->btn_menu) {
         GMenu *menu_model = g_menu_new();
       g_menu_append(menu_model, "What's New", "win.whats-new"); /* <-- BARIS BARU */
+        g_menu_append(menu_model, "Preferences", "win.preferences");
+        g_menu_append(menu_model, "Keyboard Shortcuts", "app.shortcuts");
         g_menu_append(menu_model, "About Stampy", "app.about");
         gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(self->btn_menu), G_MENU_MODEL(menu_model));
         g_object_unref(menu_model);
@@ -177,8 +296,26 @@ static void stampy_window_init(StampyWindow *self) {
     stampy_connect_panel_signals(self);
     stampy_populate_system_fonts(self);
 
+    /* Compass lock button */
+    if (self->btn_compass_lock) {
+        self->compass_locked = FALSE;
+        gtk_button_set_icon_name(GTK_BUTTON(self->btn_compass_lock), "padlock-open-symbolic");
+        g_signal_connect(self->btn_compass_lock, "toggled",
+            G_CALLBACK(stampy_on_compass_lock_toggled), self);
+    }
+
+    /* Prof Teto easter egg — click to play teto.mp3 */
+    if (self->img_decoration) {
+        GtkGesture *click = gtk_gesture_click_new();
+        gtk_widget_set_cursor_from_name(GTK_WIDGET(self->img_decoration), "pointer");
+        g_signal_connect_swapped(click, "pressed", G_CALLBACK(stampy_play_teto), self);
+        gtk_widget_add_controller(GTK_WIDGET(self->img_decoration), GTK_EVENT_CONTROLLER(click));
+    }
+
+    /* Preset scan + state load (saves stay suppressed via loading_state). */
     stampy_scan_and_populate_presets(self);
     stampy_load_last_state(self);
+    self->loading_state = FALSE;
 }
 
 StampyWindow *stampy_window_new(GtkApplication *app) {

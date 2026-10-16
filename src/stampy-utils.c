@@ -428,3 +428,45 @@ void on_add_images_action_activated(GSimpleAction *action, GVariant *parameter, 
     (void)action; (void)parameter;
     stampy_open_image_picker(self);
 }
+
+/* Open CSV file for GPS batch writing. Returns FILE* or NULL on error. */
+FILE *stampy_geo_csv_open(const char *csv_path, char **error_msg) {
+    FILE *fp;
+
+    if (!csv_path) {
+        if (error_msg) *error_msg = g_strdup("Invalid csv_path");
+        return NULL;
+    }
+
+    fp = fopen(csv_path, "w");
+    if (!fp) {
+        if (error_msg) *error_msg = g_strdup_printf("Failed to create CSV: %s", csv_path);
+        return NULL;
+    }
+
+    fprintf(fp, "SourceFile,GPSLatitude,GPSLongitude,GPSImgDirection,GPSLatitudeRef,GPSLongitudeRef\n");
+    return fp;
+}
+
+/* Append one GPS entry to the CSV with the actual exported filename. */
+void stampy_geo_csv_append_row(FILE *fp, const char *exported_path, const GeolocationEntry *entry) {
+    char lat_ref, lon_ref;
+    double abs_lat, abs_lon;
+
+    if (!fp || !exported_path || !entry) return;
+
+    abs_lat = fabs(entry->latitude);
+    abs_lon = fabs(entry->longitude);
+    lat_ref = (entry->latitude >= 0.0) ? 'N' : 'S';
+    lon_ref = (entry->longitude >= 0.0) ? 'E' : 'W';
+
+    fprintf(fp, "\"%s\",%.8f,%.8f,%.2f,%c,%c\n",
+            exported_path, abs_lat, abs_lon,
+            fmod(fabs(entry->azimuth_raw), 360.0),
+            lat_ref, lon_ref);
+}
+
+/* Close the CSV file. */
+void stampy_geo_csv_close(FILE *fp) {
+    if (fp) fclose(fp);
+}

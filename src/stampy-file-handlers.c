@@ -222,6 +222,12 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                                 } else if (col_letter == 'B' || col_letter == 'C') {
                                     /* Lat/Lon: use parse_coord_string to handle comma decimals & direction */
                                     val = parse_coord_string(val_str);
+                                } else if (col_letter == 'D') {
+                                    /* Azimuth numeric cell: user enters "335,044" meaning 335.044,
+                                       but Excel stores 335044 (comma was thousands separator).
+                                       If raw value > 360, assume 3 decimal places were intended. */
+                                    val = g_ascii_strtod(val_str, NULL);
+                                    if (val > 360.0) val = val / 1000.0;
                                 } else {
                                     val = g_ascii_strtod(val_str, NULL);
                                 }
@@ -356,6 +362,13 @@ static gboolean on_compass_drop(GtkDropTarget *target, const GValue *value, doub
                     gtk_label_set_text(GTK_LABEL(self->lbl_compass), basename);
                 }
                 g_free(basename);
+
+                /* Remember across restarts (see stampy-config.c). */
+                {
+                    g_autofree char *dir_path = g_file_get_path(file);
+                    stampy_config_set_string(STAMPY_CONFIG_KEY_COMPASS_FOLDER,
+                                             dir_path ? dir_path : "");
+                }
 
                 stampy_show_toast(self, "Compass folder set!");
                 stampy_append_log(self, "[INFO] Compass folder updated via Drag & Drop.");
@@ -508,22 +521,32 @@ static void on_compass_folder_selected(GObject *source, GAsyncResult *res, gpoin
         }
         g_free(basename);
 
+        /* Remember across restarts (see stampy-config.c). */
+        {
+            g_autofree char *dir_path = g_file_get_path(folder);
+            stampy_config_set_string(STAMPY_CONFIG_KEY_COMPASS_FOLDER,
+                                     dir_path ? dir_path : "");
+        }
+
         stampy_show_toast(self, "Compass folder selected!");
         stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
     }
 }
 
-static void on_btn_compass_clicked(GtkButton *btn, gpointer user_data) {
-    StampyWindow *self = STAMPY_WINDOW(user_data);
+void stampy_open_compass_picker(StampyWindow *self) {
     GtkFileDialog *dialog;
-    (void)btn;
 
     if (!self) return;
 
     dialog = gtk_file_dialog_new();
     gtk_file_dialog_set_title(dialog, "Select Compass Asset Folder");
     gtk_file_dialog_select_folder(dialog, GTK_WINDOW(self), NULL, on_compass_folder_selected, self);
+}
+
+static void on_btn_compass_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn;
+    stampy_open_compass_picker(STAMPY_WINDOW(user_data));
 }
 
 static void on_docx_file_opened(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -549,16 +572,19 @@ static void on_docx_file_opened(GObject *source, GAsyncResult *res, gpointer use
     }
 }
 
-static void on_btn_docx_clicked(GtkButton *btn, gpointer user_data) {
-    StampyWindow *self = STAMPY_WINDOW(user_data);
+void stampy_open_watermark_picker(StampyWindow *self) {
     GtkFileDialog *dialog;
-    (void)btn;
 
     if (!self) return;
 
     dialog = gtk_file_dialog_new();
     gtk_file_dialog_set_title(dialog, "Select Watermark DOCX File");
     gtk_file_dialog_open(dialog, GTK_WINDOW(self), NULL, on_docx_file_opened, self);
+}
+
+static void on_btn_docx_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn;
+    stampy_open_watermark_picker(STAMPY_WINDOW(user_data));
 }
 
 static void on_xlsx_file_opened(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -586,16 +612,19 @@ static void on_xlsx_file_opened(GObject *source, GAsyncResult *res, gpointer use
     }
 }
 
-static void on_btn_xlsx_clicked(GtkButton *btn, gpointer user_data) {
-    StampyWindow *self = STAMPY_WINDOW(user_data);
+void stampy_open_geolocation_picker(StampyWindow *self) {
     GtkFileDialog *dialog;
-    (void)btn;
 
     if (!self) return;
 
     dialog = gtk_file_dialog_new();
     gtk_file_dialog_set_title(dialog, "Select Geolocation XLSX File");
     gtk_file_dialog_open(dialog, GTK_WINDOW(self), NULL, on_xlsx_file_opened, self);
+}
+
+static void on_btn_xlsx_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn;
+    stampy_open_geolocation_picker(STAMPY_WINDOW(user_data));
 }
 
 /* ==========================================================

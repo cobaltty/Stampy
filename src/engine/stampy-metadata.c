@@ -80,10 +80,12 @@ gboolean stampy_metadata_write_gps_and_heading(const char *source_image_path,
     lat_str = format_double_safe(abs_lat, 8);
     lon_str = format_double_safe(abs_lon, 8);
 
-    /* COPY ALL EXIF - Menggunakan TagsFromFile. Hapus "Orientation" krn pixbuf sdh meluruskan pixel aslinya */
+    /* COPY ALL EXIF - Menggunakan TagsFromFile.
+       Hapus "Orientation" krn pixbuf sdh meluruskan pixel aslinya.
+       Hapus GPS lama (EXIF + XMP) biar tidak konflik dengan GPS baru yang kita tulis. */
     if (source_image_path && *source_image_path != '\0') {
         gchar *quoted_source = g_shell_quote(source_image_path);
-        tags_from = g_strdup_printf("-TagsFromFile %s \"-all:all\" \"-Orientation=\"", quoted_source);
+        tags_from = g_strdup_printf("-TagsFromFile %s \"-all:all\" \"-Orientation=\" \"-gps:all=\" \"-XMP:GPS:all=\"", quoted_source);
         g_free(quoted_source);
     } else {
         tags_from = g_strdup("");
@@ -128,6 +130,54 @@ gboolean stampy_metadata_write_gps_and_heading(const char *source_image_path,
             *error_msg = g_strdup_printf("ExifTool exec failed (%s, code %d): %s",
                                         exif_cmd, exit_status,
                                         error ? error->message : "Unknown error");
+        }
+        if (error) g_clear_error(&error);
+        success = FALSE;
+    } else {
+        success = TRUE;
+    }
+
+    g_free(cmd);
+    g_free(exif_cmd);
+    return success;
+}
+
+/* Apply GPS data from CSV file to all images in a folder using exiftool -csv.
+   This leverages exiftool's built-in CSV parsing for robust handling of coordinates. */
+gboolean stampy_apply_csv_gps_to_folder(const char *csv_path, const char *image_folder,
+                                         char **error_msg) {
+    char *exif_cmd;
+    gchar *quoted_csv;
+    gchar *quoted_folder;
+    gchar *cmd = NULL;
+    gint exit_status = 0;
+    GError *error = NULL;
+    gboolean success;
+
+    if (!csv_path || !image_folder) {
+        if (error_msg) *error_msg = g_strdup("Invalid csv_path or image_folder");
+        return FALSE;
+    }
+
+    exif_cmd = get_exiftool_command();
+    quoted_csv = g_shell_quote(csv_path);
+    quoted_folder = g_shell_quote(image_folder);
+
+    cmd = g_strdup_printf(
+        "%s -overwrite_original -quiet -csv=%s %s",
+        exif_cmd, quoted_csv, quoted_folder
+    );
+
+    g_free(quoted_csv);
+    g_free(quoted_folder);
+
+    success = g_spawn_command_line_sync(cmd, NULL, NULL, &exit_status, &error);
+
+    if (!success || exit_status != 0) {
+        if (error_msg) {
+            *error_msg = g_strdup_printf("ExifTool CSV batch failed (code %d): %s",
+                                         exit_status,
+                                         error ? error->message : "Unknown error");
         }
         if (error) g_clear_error(&error);
         success = FALSE;

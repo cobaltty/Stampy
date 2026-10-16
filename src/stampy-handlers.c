@@ -335,6 +335,8 @@ static void on_remove_selected_activated(GSimpleAction *action, GVariant *parame
         stampy_render_live_preview(self);
     }
 
+    stampy_update_clear_button_visibility(self);
+
     stampy_show_toast(self, "Selected images removed!");
     stampy_append_log(self, "[INFO] Selected images removed.");
 }
@@ -346,10 +348,18 @@ static void on_drop_area_frame_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 void stampy_update_clear_button_visibility(StampyWindow *self) {
-    if (!self || !self->btn_header_clear) return;
-    gboolean has_asset = (self->file_compass || self->file_watermark || self->file_geolocation ||
-                          (self->image_files && self->image_files->len > 0));
-    gtk_widget_set_visible(self->btn_header_clear, has_asset);
+    gboolean has_asset;
+
+    if (!self) return;
+
+    has_asset = (self->file_compass || self->file_watermark || self->file_geolocation ||
+                 (self->image_files && self->image_files->len > 0));
+
+    /* Compass lock button stays visible; lock state is indicated by its icon */
+    if (self->btn_compass_lock)
+        gtk_widget_set_visible(self->btn_compass_lock, TRUE);
+    if (self->btn_header_clear)
+        gtk_widget_set_visible(self->btn_header_clear, has_asset);
 }
 
 static void on_clear_all_clicked(GtkButton *btn, gpointer user_data) {
@@ -365,11 +375,20 @@ static void on_clear_all_clicked(GtkButton *btn, gpointer user_data) {
         g_hash_table_remove_all(self->geo_table);
     }
 
-    g_clear_object(&self->file_compass);
+    if (!self->compass_locked) {
+        g_clear_object(&self->file_compass);
+        if (self->lbl_compass) gtk_label_set_text(GTK_LABEL(self->lbl_compass), "Add Compass");
+        if (self->btn_compass_lock) {
+            self->compass_locked = FALSE;
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_compass_lock), FALSE);
+        }
+        /* Forget the remembered folder too (it was not locked). */
+        stampy_config_set_string(STAMPY_CONFIG_KEY_COMPASS_FOLDER, "");
+    }
+
     g_clear_object(&self->file_watermark);
     g_clear_object(&self->file_geolocation);
 
-    if (self->lbl_compass) gtk_label_set_text(GTK_LABEL(self->lbl_compass), "Add Compass");
     if (self->lbl_watermark) gtk_label_set_text(GTK_LABEL(self->lbl_watermark), "Add Watermark(.docx)");
     if (self->lbl_geolocation) gtk_label_set_text(GTK_LABEL(self->lbl_geolocation), "Add Geolocation(.xlsx)");
 
@@ -394,7 +413,6 @@ static void on_whats_new_activated(GSimpleAction *action, GVariant *parameter, g
 
     (void)action; (void)parameter;
     if (!self) return;
-
     /* Buat dialog Adwaita */
     dialog = adw_dialog_new();
     adw_dialog_set_title(dialog, "What's New in Stampy");
@@ -409,23 +427,39 @@ static void on_whats_new_activated(GSimpleAction *action, GVariant *parameter, g
     gtk_widget_set_margin_bottom(box, 24);
 
     /* Judul Dialog */
-    heading = gtk_label_new("What's New in 1.2.041.alpha");
+    heading = gtk_label_new("What's New in 1.4.001.beta?");
     gtk_widget_add_css_class(heading, "title-2");
     gtk_label_set_xalign(GTK_LABEL(heading), 0.0);
 
     /* What's New Log */
     content_label = gtk_label_new(NULL);
     content_label = gtk_label_new(
+        "TETO RELEASE (0401)\n"
+        "MAJOR UPDATE!! IS OUT OF ALPHA PHASE 🎊\n"
+        "• Keyboard Shortcuts has been implemented.\n"
+        "• Compass lock has been implemented.\n"
+        "• Intterupt has been implemented.\n"
+        "• Notification has been added when export is done.\n"
+        "• New Easteregg regarding for 0401 release:3\n"
+        "• Major performance improvement.\n"
+        " Is possible by enabling all cores to do all the job\n"
+        " the performance boost can be from 30% up to 50%.\n\n"
+        "1.3.021.alpha\n"
+        "• Minor bug fix.\n\n"
+        "1.3.020.alpha\n"
+        "• Redesign Core\n"
+        "  Rethinking logic of exif.\n\n"
+        "1.2.041.alpha\n"
         "• ExifTool Engine Integration\n"
-        "  Preserves original Date Taken & EXIF metadata with 100% accuracy (hopefully).\n\n"
+        "  Preserves original Date Taken & EXIF metadata with 100% accuracy (hopefully).\n"
         "• Interrupt / Cancel Export\n"
-        "  Instantly stop batch processing with the red Cancel button.\n\n"
+        "  Instantly stop batch processing with the red Cancel button.\n"
         "• Smart Auto-Swap Coordinates\n"
-        "  Automatically detects and fixes inverted Latitude/Longitude columns.\n\n"
+        "  Automatically detects and fixes inverted Latitude/Longitude columns.\n"
         "• Decimal Locale Resolver\n"
-        "  Seamlessly supports comma (,) and dot (.) decimal formats from Excel.\n\n"
+        "  Seamlessly supports comma (,) and dot (.) decimal formats from Excel.\n"
         "• New accompany!\n"
-        "  Prof. Teto is here to watching you and motivates you during work!\n\n"
+        "  Prof. Teto is here to watching you and motivates you during work!\n"
     );
     gtk_label_set_use_markup(GTK_LABEL(content_label), TRUE); /* Aktifkan agar tag <b> terbaca */
     gtk_label_set_wrap(GTK_LABEL(content_label), TRUE);
@@ -439,12 +473,80 @@ static void on_whats_new_activated(GSimpleAction *action, GVariant *parameter, g
     adw_dialog_present(dialog, GTK_WIDGET(self));
 }
 
+/* ==========================================================
+   KEYBOARD SHORTCUT ACTION CALLBACKS
+   ========================================================== */
+static void on_watermark_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    (void)action; (void)parameter;
+    stampy_open_watermark_picker(self);
+}
+
+static void on_geolocation_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    (void)action; (void)parameter;
+    stampy_open_geolocation_picker(self);
+}
+
+static void on_compass_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    (void)action; (void)parameter;
+    stampy_open_compass_picker(self);
+}
+
+static void on_compass_lock_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    (void)action; (void)parameter;
+    stampy_toggle_compass_lock(self);
+}
+
+static void on_export_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    (void)action; (void)parameter;
+    stampy_start_export(self);
+}
+
+static void on_cancel_export_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    (void)action; (void)parameter;
+    stampy_cancel_export(self);
+}
+
+static void on_remove_all_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    (void)action; (void)parameter;
+    if (self) on_clear_all_clicked(NULL, self);
+}
+
+static void on_select_preset_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    (void)action; (void)parameter;
+    if (self && self->drop_presets) {
+        gtk_widget_activate(GTK_WIDGET(self->drop_presets));
+    }
+}
+
+static void on_preferences_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    (void)action; (void)parameter;
+    if (self) stampy_show_preferences(self);
+}
+
 void stampy_setup_actions_and_menus(StampyWindow *self) {
     GSimpleAction *act_add;
     GSimpleAction *act_sel_all;
     GSimpleAction *act_desel_all;
     GSimpleAction *act_rem_sel;
     GSimpleAction *act_whats_new;
+    GSimpleAction *act_watermark;
+    GSimpleAction *act_geolocation;
+    GSimpleAction *act_compass;
+    GSimpleAction *act_compass_lock;
+    GSimpleAction *act_export;
+    GSimpleAction *act_cancel_export;
+    GSimpleAction *act_remove_all;
+    GSimpleAction *act_select_preset;
+    GSimpleAction *act_preferences;
 
     if (!self) return;
 
@@ -513,25 +615,45 @@ void stampy_setup_actions_and_menus(StampyWindow *self) {
     g_signal_connect(act_rem_sel, "activate", G_CALLBACK(on_remove_selected_activated), self);
     g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_rem_sel));
 
-
-  act_add = g_simple_action_new("add-images", NULL);
-    g_signal_connect(act_add, "activate", G_CALLBACK(on_add_images_action_activated), self);
-    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_add));
-
-    act_sel_all = g_simple_action_new("select-all", NULL);
-    g_signal_connect(act_sel_all, "activate", G_CALLBACK(on_select_all_activated), self);
-    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_sel_all));
-
-    act_desel_all = g_simple_action_new("deselect-all", NULL);
-    g_signal_connect(act_desel_all, "activate", G_CALLBACK(on_deselect_all_activated), self);
-    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_desel_all));
-
-    act_rem_sel = g_simple_action_new("remove-selected", NULL);
-    g_signal_connect(act_rem_sel, "activate", G_CALLBACK(on_remove_selected_activated), self);
-    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_rem_sel));
-
     /* PENDAFTARAN ACTION "WHAT'S NEW" */
     act_whats_new = g_simple_action_new("whats-new", NULL);
     g_signal_connect(act_whats_new, "activate", G_CALLBACK(on_whats_new_activated), self);
     g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_whats_new));
+
+    /* --- KEYBOARD SHORTCUT ACTIONS --- */
+    act_watermark = g_simple_action_new("watermark", NULL);
+    g_signal_connect(act_watermark, "activate", G_CALLBACK(on_watermark_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_watermark));
+
+    act_geolocation = g_simple_action_new("geolocation", NULL);
+    g_signal_connect(act_geolocation, "activate", G_CALLBACK(on_geolocation_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_geolocation));
+
+    act_compass = g_simple_action_new("compass", NULL);
+    g_signal_connect(act_compass, "activate", G_CALLBACK(on_compass_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_compass));
+
+    act_compass_lock = g_simple_action_new("compass-lock", NULL);
+    g_signal_connect(act_compass_lock, "activate", G_CALLBACK(on_compass_lock_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_compass_lock));
+
+    act_export = g_simple_action_new("export", NULL);
+    g_signal_connect(act_export, "activate", G_CALLBACK(on_export_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_export));
+
+    act_cancel_export = g_simple_action_new("cancel-export", NULL);
+    g_signal_connect(act_cancel_export, "activate", G_CALLBACK(on_cancel_export_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_cancel_export));
+
+    act_remove_all = g_simple_action_new("remove-all", NULL);
+    g_signal_connect(act_remove_all, "activate", G_CALLBACK(on_remove_all_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_remove_all));
+
+    act_select_preset = g_simple_action_new("select-preset", NULL);
+    g_signal_connect(act_select_preset, "activate", G_CALLBACK(on_select_preset_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_select_preset));
+
+    act_preferences = g_simple_action_new("preferences", NULL);
+    g_signal_connect(act_preferences, "activate", G_CALLBACK(on_preferences_activated), self);
+    g_action_map_add_action(G_ACTION_MAP(self), G_ACTION(act_preferences));
 }

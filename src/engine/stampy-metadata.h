@@ -25,6 +25,10 @@ gboolean stampy_metadata_write_gps_and_heading(const char *source_image_path, /*
                                                 double heading,
                                                 char **error_msg);
 
+/* Batch CSV GPS Writer (uses exiftool -csv for robust parsing) */
+gboolean stampy_apply_csv_gps_to_folder(const char *csv_path, const char *image_folder,
+                                         char **error_msg);
+
 G_END_DECLS
 
 #endif /* STAMPY_METADATA_H */

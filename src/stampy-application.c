@@ -41,7 +41,7 @@ stampy_application_show_about (GSimpleAction *action,
                          "application-name", "Stampy",
                          "application-icon", "com.cobaltty.stampy",
                          "developer-name", "cobaltty",
-                         "version", "1.2.041.alpha",
+                         "version", "1.4.001.beta",
                          "developers", developers,
                          "copyright", "© 2026 cobaltty",
                          "website", "https://github.com/cobaltty/stampy",
@@ -50,11 +50,54 @@ stampy_application_show_about (GSimpleAction *action,
                          NULL);
 }
 
+/* --- SHORTCUTS DIALOG CALLBACK --- */
+static gboolean
+on_shortcuts_close_idle (gpointer user_data)
+{
+  g_object_unref (user_data);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_shortcuts_closed (AdwDialog *dialog,
+                     gpointer   user_data)
+{
+  (void)user_data;
+  g_idle_add (on_shortcuts_close_idle, dialog);
+}
+
+static void
+stampy_application_show_shortcuts (GSimpleAction *action,
+                                   GVariant      *parameter,
+                                   gpointer       user_data)
+{
+  StampyApplication *self = STAMPY_APPLICATION (user_data);
+  GtkWindow *window;
+  GtkBuilder *builder;
+  GtkWidget *dialog;
+
+  (void)action;
+  (void)parameter;
+
+  window = gtk_application_get_active_window (GTK_APPLICATION (self));
+  if (window == NULL)
+    return;
+
+  builder = gtk_builder_new_from_resource ("/com/cobaltty/stampy/shortcuts-dialog.ui");
+  dialog = GTK_WIDGET (gtk_builder_get_object (builder, "shortcuts_dialog"));
+  g_object_ref_sink (dialog);
+  g_object_unref (builder);
+
+  g_signal_connect (dialog, "closed", G_CALLBACK (on_shortcuts_closed), NULL);
+  adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (window));
+}
+
 static void
 stampy_application_startup (GApplication *app)
 {
   GtkIconTheme *icon_theme;
   g_autoptr(GSimpleAction) about_action = NULL;
+  g_autoptr(GSimpleAction) shortcuts_action = NULL;
 
   G_APPLICATION_CLASS (stampy_application_parent_class)->startup (app);
 
@@ -66,6 +109,45 @@ stampy_application_startup (GApplication *app)
   about_action = g_simple_action_new ("about", NULL);
   g_signal_connect (about_action, "activate", G_CALLBACK (stampy_application_show_about), app);
   g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (about_action));
+
+  shortcuts_action = g_simple_action_new ("shortcuts", NULL);
+  g_signal_connect (shortcuts_action, "activate", G_CALLBACK (stampy_application_show_shortcuts), app);
+  g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (shortcuts_action));
+
+  /* --- KEYBOARD SHORTCUTS --- */
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+      "app.shortcuts",
+      (const char *[]){ "<Control>question", NULL });
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+      "win.add-images",
+      (const char *[]){ "<Alt>i", NULL });
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+      "win.watermark",
+      (const char *[]){ "<Alt>w", NULL });
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+      "win.geolocation",
+      (const char *[]){ "<Alt>g", NULL });
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+      "win.compass",
+      (const char *[]){ "<Alt>c", NULL });
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+      "win.compass-lock",
+      (const char *[]){ "<Alt><Shift>c", NULL });
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+      "win.export",
+      (const char *[]){ "<Ctrl>e", NULL });
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+      "win.cancel-export",
+      (const char *[]){ "<Ctrl>c", NULL });
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+      "win.remove-all",
+      (const char *[]){ "<Ctrl>d", NULL });
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+      "win.select-preset",
+      (const char *[]){ "<Ctrl>s", NULL });
+  gtk_application_set_accels_for_action (GTK_APPLICATION (app),
+      "win.preferences",
+      (const char *[]){ "<Control>comma", NULL });
 }
 
 static void

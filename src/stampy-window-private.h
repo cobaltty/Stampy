@@ -24,6 +24,8 @@ struct _StampyWindow {
     GtkWidget *file_listbox;
 
     GtkWidget *btn_compass;
+    GtkWidget *btn_compass_lock;
+    gboolean compass_locked;
     GtkWidget *btn_watermark;
     GtkWidget *btn_geolocation;
     GtkWidget *lbl_compass;
@@ -82,7 +84,9 @@ struct _StampyWindow {
     GFile *file_watermark;
     GFile *file_geolocation;
     GtkWidget *btn_header_cancel;
+    GtkWidget *img_decoration;
     gint export_cancel_flag;
+    gboolean loading_state;
 };
 
 /* Core Window Methods */
@@ -94,6 +98,14 @@ void stampy_connect_export_logic(StampyWindow *self);
 void stampy_connect_panel_signals(StampyWindow *self);
 void stampy_render_live_preview(StampyWindow *self);
 void on_add_images_action_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data);
+
+/* Keyboard Shortcut Action Helpers */
+void stampy_open_compass_picker(StampyWindow *self);
+void stampy_open_watermark_picker(StampyWindow *self);
+void stampy_open_geolocation_picker(StampyWindow *self);
+void stampy_start_export(StampyWindow *self);
+void stampy_cancel_export(StampyWindow *self);
+void stampy_toggle_compass_lock(StampyWindow *self);
 
 /* Utility & List Helpers */
 void stampy_populate_system_fonts(StampyWindow *self);
@@ -113,6 +125,40 @@ void stampy_set_progress(StampyWindow *self, double fraction, gboolean visible);
 
 /* Clear Button Visibility */
 void stampy_update_clear_button_visibility(StampyWindow *self);
+
+/* Preferences */
+void stampy_show_preferences(StampyWindow *self);
+int stampy_get_jpeg_quality(StampyWindow *self);
+void stampy_set_jpeg_quality(StampyWindow *self, int quality);
+
+/* Persistent config store (~/.config/stampy_prefs.json).
+ * Single source of truth for all preferences, current and future.
+ * Values are saved to disk immediately on every set_*() call.
+ * Main-thread use only. */
+#define STAMPY_CONFIG_KEY_JPEG_QUALITY   "jpeg-quality"   /* int 1..100, default 90 */
+#define STAMPY_CONFIG_KEY_COMPASS_LOCKED "compass-locked"  /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_COMPASS_FOLDER "compass-folder"  /* string path, default "" */
+#define STAMPY_CONFIG_KEY_EXPORT_USE_ALL_CORES "export-use-all-cores" /* bool, default TRUE */
+#define STAMPY_CONFIG_KEY_EXPORT_THREAD_COUNT  "export-thread-count"  /* int, 0 = auto (all cores) */
+/* To add a future preference: #define a new key here, then use the
+ * stampy_config_get/set_*() helpers. No other plumbing needed. */
+int stampy_config_get_int(const char *key, int fallback);
+void stampy_config_set_int(const char *key, int value);
+gboolean stampy_config_get_bool(const char *key, gboolean fallback);
+void stampy_config_set_bool(const char *key, gboolean value);
+char *stampy_config_get_string(const char *key, const char *fallback); /* transfer full */
+void stampy_config_set_string(const char *key, const char *value);
+/* Resolved worker-thread count for parallel export: all logical cores when
+ * "export-use-all-cores" is set (default), otherwise the stored
+ * "export-thread-count" clamped to [1, n_cpus]. Always >= 1. */
+int stampy_config_get_export_threads(void);
+/* Store a worker-thread count, clamped to [1, n_cpus]. */
+void stampy_config_set_export_threads(int value);
+
+/* CSV Export for exiftool batch GPS */
+FILE *stampy_geo_csv_open(const char *csv_path, char **error_msg);
+void stampy_geo_csv_append_row(FILE *fp, const char *exported_path, const GeolocationEntry *entry);
+void stampy_geo_csv_close(FILE *fp);
 
 /* Geolocation Helpers */
 gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char **out_text, char **out_azimuth);

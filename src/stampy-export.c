@@ -31,6 +31,8 @@ typedef struct {
     GdkRGBA text_color;
     GdkRGBA stroke_color;
 
+    int jpeg_quality;
+
     GFile *file_compass;
 } ExportSettingsSnapshot;
 
@@ -38,6 +40,7 @@ typedef struct {
     StampyWindow *self;
     GFile *export_folder;
     ExportSettingsSnapshot snapshot;
+    guint inhibit_cookie;
 } ExportThreadData;
 
 typedef struct {
@@ -48,6 +51,21 @@ typedef struct {
     gboolean is_toast;
     gboolean is_finished;
 } UIProgressUpdateData;
+
+/* Shared context for parallel export — read-only during export, safe to share across threads */
+typedef struct {
+    StampyWindow *self;
+    char *folder_path;
+    ExportSettingsSnapshot snapshot;
+    guint total;
+    volatile gint completed;   /* atomic counter */
+} ExportWorkerContext;
+
+/* Per-image work item */
+typedef struct {
+    ExportWorkerContext *ctx;
+    guint index;
+} ExportWorkItem;
 
 /* ========================================================================= */
 /* --- HELPER FUNCTIONS ---                                                  */
@@ -210,6 +228,8 @@ static void snapshot_export_settings(StampyWindow *window_self, ExportSettingsSn
     memset(snap, 0, sizeof(ExportSettingsSnapshot));
 
     if (!window_self) return;
+
+    snap->jpeg_quality = stampy_get_jpeg_quality(window_self);
 
     if (window_self->file_compass) {
         snap->file_compass = g_object_ref(window_self->file_compass);
@@ -617,6 +637,170 @@ static void send_progress_to_ui(StampyWindow *window_self, double fraction, gboo
     g_idle_add(update_ui_progress_idle, data);
 }
 
+/* --- PARALLEL EXPORT WORKER (one per image) --- */
+static void export_image_worker(gpointer data, gpointer user_data) {
+    ExportWorkItem *item = (ExportWorkItem *)data;
+    ExportWorkerContext *ctx = (ExportWorkerContext *)user_data;
+    StampyWindow *window_self = ctx->self;
+    guint i = item->index;
+    guint total = ctx->total;
+
+    GFile *file;
+    char *orig_basename = NULL;
+    char *out_path = NULL;
+    GeolocationEntry geo_entry;
+    gboolean has_geo = FALSE;
+    GdkPixbuf *stamped = NULL;
+    int photo_id;
+    char *custom_text = NULL;
+    char *azimuth_str = NULL;
+    double clean_heading_val = -1.0;
+
+    if (g_atomic_int_get(&window_self->export_cancel_flag) == 1) {
+        g_free(item);
+        return;
+    }
+
+    file = g_ptr_array_index(window_self->image_files, i);
+    if (!file) { g_free(item); return; }
+
+    orig_basename = g_file_get_basename(file);
+    if (!orig_basename || *orig_basename == '\0') {
+        g_free(orig_basename);
+        g_free(item);
+        return;
+    }
+
+    out_path = g_build_filename(ctx->folder_path, orig_basename, NULL);
+    photo_id = extract_id_from_filename(orig_basename);
+
+    if (photo_id > 0) {
+        if (window_self->file_watermark) {
+            if (stampy_lookup_docx_data(window_self, orig_basename, &custom_text, &azimuth_str)) {
+                remove_image_marker_from_text(&custom_text, photo_id);
+            }
+        }
+
+        if (window_self->file_geolocation && window_self->geo_table) {
+            has_geo = stampy_lookup_geolocation_data(window_self, photo_id, &geo_entry);
+            if (has_geo) {
+                char lat_str[32], lon_str[32];
+                double compass_deg = 0.0;
+                format_geolocation_text(&geo_entry, lat_str, lon_str, &compass_deg);
+                clean_heading_val = compass_deg;
+                if (!custom_text) custom_text = g_strdup_printf("%s %s", lat_str, lon_str);
+                if (!azimuth_str) azimuth_str = g_strdup_printf("%.2f", compass_deg);
+            }
+        }
+    }
+
+    stamped = render_stamped_pixbuf_from_snapshot(file, &ctx->snapshot, custom_text, azimuth_str);
+
+    if (stamped) {
+        GError *error = NULL;
+        gboolean saved = FALSE;
+        char *lower_name = g_ascii_strdown(orig_basename, -1);
+        char *src_path = g_file_get_path(file);
+
+        if (lower_name && g_str_has_suffix(lower_name, ".png")) {
+            saved = gdk_pixbuf_save(stamped, out_path, "png", &error, NULL);
+        } else {
+            char *quality_str = g_strdup_printf("%d", ctx->snapshot.jpeg_quality > 0 ? ctx->snapshot.jpeg_quality : 90);
+            saved = gdk_pixbuf_save(stamped, out_path, "jpeg", &error, "quality", quality_str, NULL);
+            g_free(quality_str);
+        }
+        g_free(lower_name);
+
+        if (saved) {
+            char *exif_err = NULL;
+
+            if (has_geo) {
+                if (!stampy_metadata_write_gps_and_heading(src_path, out_path,
+                                                          geo_entry.latitude,
+                                                          geo_entry.longitude,
+                                                          clean_heading_val,
+                                                          &exif_err)) {
+                    char *wmsg = g_strdup_printf("[WARN] GPS write failed for %s: %s", orig_basename, exif_err ? exif_err : "Unknown");
+                    send_progress_to_ui(window_self, 0.0, FALSE, wmsg, FALSE, FALSE);
+                    g_free(wmsg);
+                    g_free(exif_err);
+                    exif_err = NULL;
+                }
+            } else {
+                gchar *quoted_source = g_shell_quote(src_path);
+                gchar *quoted_target = g_shell_quote(out_path);
+                char *copy_cmd = g_strdup_printf(
+                    "%s -overwrite_original -quiet -TagsFromFile %s \"-all:all\" \"-Orientation=\" %s",
+                    g_getenv("STAMPY_EXIFTOOL") ? g_getenv("STAMPY_EXIFTOOL") : "exiftool",
+                    quoted_source, quoted_target);
+                g_spawn_command_line_sync(copy_cmd, NULL, NULL, NULL, NULL);
+                g_free(copy_cmd);
+                g_free(quoted_source);
+                g_free(quoted_target);
+            }
+
+            g_free(src_path);
+        } else {
+            char *emsg = g_strdup_printf("[ERROR] Failed saving: %s (%s)", orig_basename, error ? error->message : "Unknown");
+            send_progress_to_ui(window_self, 0.0, FALSE, emsg, FALSE, FALSE);
+            g_free(emsg);
+            if (error) g_error_free(error);
+        }
+
+        g_object_unref(stamped);
+    } else {
+        char *emsg = g_strdup_printf("[ERROR] Failed rendering: %s", orig_basename);
+        send_progress_to_ui(window_self, 0.0, FALSE, emsg, FALSE, FALSE);
+        g_free(emsg);
+    }
+
+    g_free(custom_text);
+    g_free(azimuth_str);
+    g_free(orig_basename);
+    g_free(out_path);
+    g_free(item);
+
+    /* Update progress */
+    int done = g_atomic_int_add(&ctx->completed, 1) + 1;
+    if (done % 10 == 0 || done == (int)total) {
+        char *msg = g_strdup_printf("[%d/%u] photos processed...", done, total);
+        send_progress_to_ui(window_self, (double)done / (double)total, TRUE, msg, FALSE, FALSE);
+        g_free(msg);
+    }
+}
+
+/* --- Uninhibit + Send Notification (runs on main thread via g_idle_add) --- */
+typedef struct {
+    GtkApplication *app;
+    guint cookie;
+    guint total;
+    guint completed;
+} ExportFinishData;
+
+static gboolean on_export_finished_idle(gpointer user_data) {
+    ExportFinishData *data = (ExportFinishData *)user_data;
+
+    /* Uninhibit sleep */
+    if (data->app && data->cookie > 0) {
+        gtk_application_uninhibit(data->app, data->cookie);
+    }
+
+    /* Send desktop notification */
+    if (data->app) {
+        GNotification *notif = g_notification_new("Stampy Export Complete");
+        char *body = g_strdup_printf("All %u photos have been exported successfully!", data->completed);
+        g_notification_set_body(notif, body);
+        g_notification_set_priority(notif, G_NOTIFICATION_PRIORITY_NORMAL);
+        g_application_send_notification(G_APPLICATION(data->app), "export-complete", notif);
+        g_free(body);
+        g_object_unref(notif);
+    }
+
+    g_object_unref(data->app);
+    g_free(data);
+    return G_SOURCE_REMOVE;
+}
+
 static gpointer export_worker_thread(gpointer user_data) {
     ExportThreadData *td;
     StampyWindow *window_self;
@@ -640,122 +824,41 @@ static gpointer export_worker_thread(gpointer user_data) {
     }
 
     send_progress_to_ui(window_self, 0.0, TRUE, "Exporting photos in background...", TRUE, FALSE);
-    msg = g_strdup_printf("[INFO] Starting export of %u items...", total);
-    send_progress_to_ui(window_self, 0.0, TRUE, msg, FALSE, FALSE);
-    g_free(msg);
 
-    for (i = 0; i < total; i++) {
-        GFile *file;
-        char *orig_basename;
-        char *out_path;
-        GeolocationEntry geo_entry;
-        gboolean has_geo = FALSE;
-        GdkPixbuf *stamped = NULL;
-        int photo_id;
-        char *custom_text = NULL;
-        char *azimuth_str = NULL;
-        double clean_heading_val = -1.0;
+    /* --- PARALLEL EXPORT via GThreadPool --- */
+    {
+        ExportWorkerContext ctx;
+        GThreadPool *pool;
+        gint max_threads = stampy_config_get_export_threads();
+        GError *pool_err = NULL;
 
-        if (g_atomic_int_get(&window_self->export_cancel_flag) == 1) {
-            send_progress_to_ui(window_self, 1.0, FALSE, "Export Cancelled!", TRUE, TRUE);
-            send_progress_to_ui(window_self, 1.0, FALSE, "[WARN] Export process was interrupted by user.", FALSE, TRUE);
-            goto cleanup_and_exit;
-        }
+        msg = g_strdup_printf("[INFO] Starting parallel export of %u items (%d worker thread%s)...",
+                              total, max_threads, max_threads == 1 ? "" : "s");
+        send_progress_to_ui(window_self, 0.0, TRUE, msg, FALSE, FALSE);
+        g_free(msg);
 
-        file = g_ptr_array_index(window_self->image_files, i);
-        if (!file) continue;
+        ctx.self = window_self;
+        ctx.folder_path = folder_path;
+        ctx.snapshot = td->snapshot;  /* struct copy — read-only during export */
+        ctx.total = total;
+        ctx.completed = 0;
 
-        orig_basename = g_file_get_basename(file);
-        if (!orig_basename || *orig_basename == '\0') {
-            g_free(orig_basename);
-            continue;
-        }
-
-        out_path = g_build_filename(folder_path, orig_basename, NULL);
-        photo_id = extract_id_from_filename(orig_basename);
-
-        if (photo_id > 0) {
-            if (window_self->file_watermark) {
-                if (stampy_lookup_docx_data(window_self, orig_basename, &custom_text, &azimuth_str)) {
-                    remove_image_marker_from_text(&custom_text, photo_id);
-                }
+        /* max_threads comes from Preferences (all cores, or a manual limit) */
+        pool = g_thread_pool_new(export_image_worker, &ctx, max_threads, FALSE, &pool_err);
+        if (!pool_err) {
+            for (i = 0; i < total; i++) {
+                if (g_atomic_int_get(&window_self->export_cancel_flag) == 1) break;
+                ExportWorkItem *item = g_new0(ExportWorkItem, 1);
+                item->ctx = &ctx;
+                item->index = i;
+                g_thread_pool_push(pool, item, NULL);
             }
-
-            if (window_self->file_geolocation && window_self->geo_table) {
-                has_geo = stampy_lookup_geolocation_data(window_self, photo_id, &geo_entry);
-                if (has_geo) {
-                    char lat_str[32], lon_str[32];
-                    double compass_deg = 0.0;
-                    format_geolocation_text(&geo_entry, lat_str, lon_str, &compass_deg);
-
-                    clean_heading_val = compass_deg;
-
-                    if (!custom_text) custom_text = g_strdup_printf("%s %s", lat_str, lon_str);
-                    if (!azimuth_str) azimuth_str = g_strdup_printf("%.2f", compass_deg);
-                }
-            }
-        }
-
-        stamped = render_stamped_pixbuf_from_snapshot(file, &td->snapshot, custom_text, azimuth_str);
-
-        if (stamped) {
-            GError *error = NULL;
-            gboolean saved = FALSE;
-            char *lower_name = g_ascii_strdown(orig_basename, -1);
-            char *src_path = g_file_get_path(file);
-
-            if (lower_name && g_str_has_suffix(lower_name, ".png")) {
-                saved = gdk_pixbuf_save(stamped, out_path, "png", &error, NULL);
-            } else {
-                saved = gdk_pixbuf_save(stamped, out_path, "jpeg", &error, "quality", "100", NULL);
-            }
-            g_free(lower_name);
-
-            if (saved) {
-                char *exif_err = NULL;
-
-                if (has_geo) {
-                    gboolean meta_ok = stampy_metadata_write_gps_and_heading(src_path,
-                                                                                out_path,
-                                                                                geo_entry.latitude,
-                                                                                geo_entry.longitude,
-                                                                                clean_heading_val,
-                                                                                &exif_err);
-                    if (meta_ok) {
-                        msg = g_strdup_printf("[%u/%u] SUCCESS SAVED (Matched): %s | Lat: %.6f, Lon: %.6f",
-                                              i + 1, total, orig_basename, geo_entry.latitude, geo_entry.longitude);
-                    } else {
-                        msg = g_strdup_printf("[WARN] EXIF Write failed on %s: %s", orig_basename, exif_err ? exif_err : "Unknown Error");
-                        g_free(exif_err);
-                    }
-                } else {
-                    gboolean meta_ok = stampy_metadata_write_gps_and_heading(src_path, out_path, 0, 0, -1.0, &exif_err);
-                    msg = g_strdup_printf("[%u/%u] Saved without Excel GPS (ID %d not found): %s",
-                                          i + 1, total, photo_id, orig_basename);
-                    if (exif_err) g_free(exif_err);
-                }
-
-                send_progress_to_ui(window_self, (double)(i + 1) / (double)total, TRUE, msg, FALSE, FALSE);
-                g_free(msg);
-            } else {
-                msg = g_strdup_printf("[ERROR] Failed saving: %s (%s)", orig_basename, error ? error->message : "Unknown error");
-                send_progress_to_ui(window_self, (double)(i + 1) / (double)total, TRUE, msg, FALSE, FALSE);
-                g_free(msg);
-                if (error) g_error_free(error);
-            }
-
-            g_free(src_path);
-            g_object_unref(stamped);
+            /* Wait for all tasks to finish */
+            g_thread_pool_free(pool, FALSE, TRUE);
         } else {
-            msg = g_strdup_printf("[ERROR] Failed rendering: %s", orig_basename);
-            send_progress_to_ui(window_self, (double)(i + 1) / (double)total, TRUE, msg, FALSE, FALSE);
-            g_free(msg);
+            send_progress_to_ui(window_self, 0.0, FALSE, "[ERROR] Failed to create thread pool.", FALSE, TRUE);
+            g_error_free(pool_err);
         }
-
-        g_free(custom_text);
-        g_free(azimuth_str);
-        g_free(orig_basename);
-        g_free(out_path);
     }
 
     send_progress_to_ui(window_self, 1.0, FALSE, "Export Finished!", TRUE, TRUE);
@@ -763,8 +866,22 @@ static gpointer export_worker_thread(gpointer user_data) {
     send_progress_to_ui(window_self, 1.0, FALSE, msg, FALSE, TRUE);
     g_free(msg);
 
-cleanup_and_exit:
+    /* Cleanup — snapshot was struct-copied into ctx, but we still own td->snapshot */
     free_export_snapshot(&td->snapshot);
+
+    /* Uninhibit sleep + send completion notification on main thread */
+    {
+        GtkApplication *app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(window_self)));
+        if (app) {
+            ExportFinishData *finish = g_new0(ExportFinishData, 1);
+            finish->app = g_object_ref(app);
+            finish->cookie = td->inhibit_cookie;
+            finish->completed = total;
+            finish->total = total;
+            g_idle_add(on_export_finished_idle, finish);
+        }
+    }
+
     g_free(folder_path);
     if (td->export_folder) g_object_unref(td->export_folder);
     g_free(td);
@@ -795,16 +912,23 @@ static void on_export_folder_selected(GObject *source, GAsyncResult *res, gpoint
     td->self = window_self;
     td->export_folder = folder;
 
+    /* Inhibit sleep during export */
+    {
+        GtkApplication *app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(window_self)));
+        if (app) {
+            td->inhibit_cookie = gtk_application_inhibit(app, GTK_WINDOW(window_self),
+                GTK_APPLICATION_INHIBIT_IDLE | GTK_APPLICATION_INHIBIT_SUSPEND,
+                "Photo export is in progress");
+        }
+    }
+
     snapshot_export_settings(window_self, &td->snapshot);
 
     g_thread_new("stampy-export-thread", export_worker_thread, td);
 }
 
-static void on_btn_header_export_clicked(GtkButton *btn, gpointer user_data) {
-    StampyWindow *window_self = STAMPY_WINDOW(user_data);
+void stampy_start_export(StampyWindow *window_self) {
     GtkFileDialog *dialog;
-
-    (void)btn;
 
     if (!window_self || !window_self->image_files || window_self->image_files->len == 0) {
         stampy_show_toast(window_self, "No images loaded in list!");
@@ -816,13 +940,22 @@ static void on_btn_header_export_clicked(GtkButton *btn, gpointer user_data) {
     gtk_file_dialog_select_folder(dialog, GTK_WINDOW(window_self), NULL, on_export_folder_selected, window_self);
 }
 
-static void on_btn_header_cancel_clicked(GtkButton *btn, gpointer user_data) {
-    StampyWindow *window_self = STAMPY_WINDOW(user_data);
+static void on_btn_header_export_clicked(GtkButton *btn, gpointer user_data) {
     (void)btn;
+    stampy_start_export(STAMPY_WINDOW(user_data));
+}
+
+void stampy_cancel_export(StampyWindow *window_self) {
     if (!window_self) return;
 
     g_atomic_int_set(&window_self->export_cancel_flag, 1);
-    gtk_widget_set_sensitive(GTK_WIDGET(window_self->btn_header_cancel), FALSE);
+    if (window_self->btn_header_cancel)
+        gtk_widget_set_sensitive(GTK_WIDGET(window_self->btn_header_cancel), FALSE);
+}
+
+static void on_btn_header_cancel_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn;
+    stampy_cancel_export(STAMPY_WINDOW(user_data));
 }
 
 void stampy_connect_export_logic(StampyWindow *window_self) {

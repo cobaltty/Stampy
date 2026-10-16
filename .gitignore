@@ -1,0 +1,7 @@
+[?2004l_build/
+build/
+build-dir/
+.flatpak-builder/
+repo/
+*.flatpak
+System*
