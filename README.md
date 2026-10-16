@@ -28,4 +28,18 @@ one by one.
 
 ## Install
 
-Build and install the Flatpak with `com.cobaltty.stampy.json`.
+```sh
+flatpak remote-add stampy https://cobaltty.github.io/Stampy/com.cobaltty.stampy.flatpakrepo
+flatpak install stampy com.cobaltty.stampy//stable
+```
+
+Updates arrive through normal `flatpak update`. Releases are GPG-signed;
+if you installed while the remote was unsigned, remove and re-add it once
+to switch to verified updates.
+
+## Disclaimer
+
+Stampy is still under active development by an owner who is still learning.
+Expect bugs, rough edges, and breaking changes. use it at your own risk.
+
+Any help would be valuable!
