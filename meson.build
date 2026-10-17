@@ -1,5 +1,5 @@
 project('stampy', 'c',
-          version: '1.5.000.beta',
+          version: '1.6.010.beta',
     meson_version: '>= 1.0.0',
   default_options: [ 'warning_level=2', 'werror=false', 'c_std=gnu11', ],
 )

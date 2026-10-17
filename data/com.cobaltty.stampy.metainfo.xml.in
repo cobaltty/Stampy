@@ -45,6 +45,18 @@
   </screenshots>
 
   <releases>
+    <release version="1.6.010.beta" date="2026-10-16">
+      <description>
+        <p>Experimental metadata injection to EXIF.</p>
+        <p>Changes:</p>
+        <ul>
+          <li>New experimental toggle: inject DOCX watermark text as EXIF Title/Description (XMP Title/Description, XPTitle, ImageDescription)</li>
+          <li>New experimental toggle: inject XLSX clock/jam time column as EXIF DateTimeOriginal/DateTimeDigitized/DateTime</li>
+          <li>Dynamic XLSX column mapping via header row scanning (no hardcoded column letters)</li>
+          <li>DOCX date text extraction ("Kamis, 23 Juli 2026" → "2026:07:23")</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.5.000.beta" date="2026-10-16">
       <description>
         <p>Preferences, persistent settings, and export thread controls.</p>

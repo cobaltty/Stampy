@@ -509,6 +509,13 @@ static void on_whats_new_activated(GSimpleAction *action, GVariant *parameter, g
     gtk_box_append(GTK_BOX(content), whats_new_bullet("JPEG compress quality with slider and typeable value."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Preferences, compass folder and lock, and the selected preset are remembered across restarts."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Export thread controls: use all CPU cores automatically or set a manual worker count."));
+    gtk_box_append(GTK_BOX(content), whats_new_heading("Experimental image properties"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Optionally inject DOCX watermark text into exported image title and description metadata."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Optionally inject XLSX clock/time values into EXIF DateTimeOriginal, DateTimeDigitized, and DateTime."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Preferences and main-panel metadata switches stay synchronized."));
+    gtk_box_append(GTK_BOX(content), whats_new_heading("Metadata improvements"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("XLSX columns for ID, longitude, latitude, azimuth, and time are detected from the header row."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Indonesian dates in DOCX watermark text are parsed for EXIF date/time metadata (for example, \"Kamis, 23 Juli 2026\" becomes \"2026:07:23\")."));
     gtk_box_append(GTK_BOX(content), whats_new_heading("Fixes"));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed a crash when closing the Preferences dialog."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed a crash on startup in the settings loader."));
