@@ -236,7 +236,10 @@ stampy_show_preferences (StampyWindow *self)
   AdwPreferencesPage *page;
   AdwPreferencesGroup *comp_group;
   AdwPreferencesGroup *perf_group;
+  AdwPreferencesGroup *exp_group;
   AdwSwitchRow *cores_switch;
+  AdwSwitchRow *title_exp_toggle;
+  AdwSwitchRow *xlsx_time_toggle;
   GtkWidget *threads_row;
   gboolean use_all;
   int n_cpus;
@@ -292,6 +295,7 @@ stampy_show_preferences (StampyWindow *self)
   adw_switch_row_set_active (cores_switch, use_all);
   adw_preferences_group_add (perf_group, GTK_WIDGET (cores_switch));
 
+  /* Worker threads row */
   threads_row = add_int_slider_row (perf_group,
                                     "Worker threads",
                                     "Number of images processed at the same time. "
@@ -306,7 +310,74 @@ stampy_show_preferences (StampyWindow *self)
                     G_CALLBACK (on_use_all_cores_changed),
                     threads_row);
 
+  /* Title experimental toggle */
+  title_exp_toggle = ADW_SWITCH_ROW (adw_switch_row_new ());
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (title_exp_toggle), "Watermark injection to metadata");
+  adw_switch_row_set_active (title_exp_toggle,
+      stampy_config_get_bool (STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, FALSE));
+  g_signal_connect (title_exp_toggle, "notify::active",
+                    G_CALLBACK (on_title_exp_toggle_changed), self);
+
+  /* Image properties metadata injection toggle */
+  exp_group = ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
+  adw_preferences_group_set_title (exp_group, "Image Properties");
+  adw_preferences_page_add (page, exp_group);
+
+  adw_preferences_group_add (exp_group, GTK_WIDGET (title_exp_toggle));
+  gtk_widget_set_tooltip_text (GTK_WIDGET (title_exp_toggle),
+      "When enabled, DOCX watermark text will be injected as image title/description metadata. "
+      "This is an experimental feature.");
+
+  /* XLSX clock injection toggle */
+  xlsx_time_toggle = ADW_SWITCH_ROW (adw_switch_row_new ());
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (xlsx_time_toggle), "XLSX clock injection to EXIF");
+  adw_switch_row_set_active (xlsx_time_toggle,
+      stampy_config_get_bool (STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE));
+  g_signal_connect (xlsx_time_toggle, "notify::active",
+                    G_CALLBACK (on_xlsx_time_exif_toggled), self);
+  adw_preferences_group_add (exp_group, GTK_WIDGET (xlsx_time_toggle));
+  gtk_widget_set_tooltip_text (GTK_WIDGET (xlsx_time_toggle),
+      "When enabled, XLSX clock/jam column time will be injected as EXIF "
+      "DateTimeOriginal and DateTimeDigitized. This is an experimental feature.");
+
   /* Programmatic dialogs need no close-handler unref (unlike the
    * builder-based shortcuts dialog); unref'ing here double-frees. */
   adw_dialog_present (dialog, GTK_WIDGET (self));
+}
+
+void
+on_title_exp_toggle_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  gboolean active;
+  StampyWindow *self = STAMPY_WINDOW (user_data);
+
+  (void) pspec;
+  (void) user_data;
+
+  active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
+  stampy_config_set_bool (STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, active);
+  if (self != NULL && self->btn_metadata_inject != NULL &&
+      gtk_switch_get_active (GTK_SWITCH (self->btn_metadata_inject)) != active)
+    gtk_switch_set_active (GTK_SWITCH (self->btn_metadata_inject), active);
+}
+
+void
+on_xlsx_time_exif_toggled (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  gboolean active;
+  StampyWindow *self = STAMPY_WINDOW (user_data);
+
+  (void) pspec;
+  (void) user_data;
+
+  if (ADW_IS_SWITCH_ROW (object))
+    active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
+  else
+    active = gtk_switch_get_active (GTK_SWITCH (object));
+  stampy_config_set_bool (STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, active);
+
+  if (self != NULL && self->btn_xlsx_time_exif != NULL &&
+      GTK_WIDGET (self->btn_xlsx_time_exif) != GTK_WIDGET (object) &&
+      gtk_switch_get_active (GTK_SWITCH (self->btn_xlsx_time_exif)) != active)
+    gtk_switch_set_active (GTK_SWITCH (self->btn_xlsx_time_exif), active);
 }

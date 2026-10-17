@@ -4,7 +4,7 @@
   <template class="StampyWindow" parent="AdwApplicationWindow">
     <property name="title"></property>
     <property name="default-width">1250</property>
-    <property name="default-height">700</property>
+    <property name="default-height">800 </property>
     <child>
       <object class="AdwToolbarView">
 
@@ -544,6 +544,54 @@
                                                 <property name="tooltip-text">Export Preset (.json)</property>
                                               </object>
                                             </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+
+                                    <!-- Metadata injection toggle -->
+                                    <child><object class="GtkSeparator"/></child>
+                                    <child><object class="GtkLabel"><property name="label">EXPERIMENTAL</property><property name="halign">1</property><style><class name="heading"/></style></object></child>
+                                     <child>
+                                      <object class="GtkBox">
+                                        <property name="spacing">8</property>
+                                        <property name="halign">start</property>
+                                        <property name="hexpand">false</property>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label">Watermark injection to metadata</property>
+                                            <property name="halign">start</property>
+                                            <property name="hexpand">true</property>
+                                            <property name="tooltip-text">When enabled, DOCX watermark text will be injected as image title/description metadata. This is an experimental feature.</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkSwitch" id="btn_metadata_inject">
+                                            <property name="valign">center</property>
+                                            <property name="hexpand">false</property>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+
+                                    <!-- XLSX time injection toggle -->
+                                    <child>
+                                      <object class="GtkBox">
+                                        <property name="spacing">8</property>
+                                        <property name="halign">start</property>
+                                        <property name="hexpand">false</property>
+                                        <child>
+                                          <object class="GtkLabel">
+                                            <property name="label">XLSX clock injection to EXIF</property>
+                                            <property name="halign">start</property>
+                                            <property name="hexpand">true</property>
+                                            <property name="tooltip-text">When enabled, XLSX clock/jam column time will be injected as EXIF DateTimeOriginal and DateTimeDigitized. This is an experimental feature.</property>
+                                          </object>
+                                        </child>
+                                        <child>
+                                          <object class="GtkSwitch" id="btn_xlsx_time_exif">
+                                            <property name="valign">center</property>
+                                            <property name="hexpand">false</property>
                                           </object>
                                         </child>
                                       </object>

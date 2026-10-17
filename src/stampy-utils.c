@@ -263,6 +263,119 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char 
     return found;
 }
 
+/* Extracts project description text from full DOCX watermark text.
+   Returns lines between the azimuth line and the "Index number:" line. */
+gboolean stampy_extract_project_description(const char *full_text, char **out_text) {
+    char **lines;
+    char **raw_lines;
+    GString *result;
+    gboolean started = FALSE;
+    gboolean found_azimuth = FALSE;
+    int i;
+
+    if (!full_text || !out_text) return FALSE;
+
+    raw_lines = g_strsplit(full_text, "\n", -1);
+    if (!raw_lines) return FALSE;
+
+    lines = g_new0(char *, g_strv_length(raw_lines) + 1);
+    for (i = 0; raw_lines[i] != NULL; i++) {
+        if (strlen(raw_lines[i]) > 0) lines[i] = g_strdup(raw_lines[i]);
+    }
+    g_strfreev(raw_lines);
+
+    result = g_string_new("");
+
+    for (i = 0; lines[i] != NULL; i++) {
+        /* Detect azimuth line: contains degree symbol and direction letter */
+        if (!started) {
+            if (strchr(lines[i], '°') && (strchr(lines[i], 'N') || strchr(lines[i], 'S') ||
+                strchr(lines[i], 'E') || strchr(lines[i], 'W'))) {
+                found_azimuth = TRUE;
+                started = TRUE;
+            }
+            continue;
+        }
+
+        /* Stop at "Index number:" line */
+        if (g_str_has_prefix(lines[i], "Index number:")) break;
+
+        if (result->len > 0) g_string_append_c(result, ' ');
+        g_string_append(result, lines[i]);
+    }
+
+    for (i = 0; lines[i] != NULL; i++) g_free(lines[i]);
+    g_free(lines);
+
+    if (found_azimuth && result->len > 0) {
+        *out_text = g_string_free(result, FALSE);
+        return TRUE;
+    }
+
+    g_string_free(result, TRUE);
+    *out_text = NULL;
+    return FALSE;
+}
+
+/* Extracts date "Kamis, 23 Juli 2026" → "2026:07:23" from DOCX watermark text. */
+gboolean stampy_extract_docx_date(const char *full_text, char **out_date) {
+    static const char *months[] = {
+        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+        "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+    };
+    char **raw_lines;
+    char **lines;
+    GString *result;
+    int i, j, month_idx;
+    int day = 0, year = 0, month = 0;
+    const char *month_text;
+
+    if (!full_text || !out_date) return FALSE;
+
+    raw_lines = g_strsplit(full_text, "\n", -1);
+    if (!raw_lines) return FALSE;
+
+    lines = g_new0(char *, g_strv_length(raw_lines) + 1);
+    for (i = 0; raw_lines[i] != NULL; i++) {
+        if (strlen(raw_lines[i]) > 0) lines[i] = g_strdup(raw_lines[i]);
+    }
+    g_strfreev(raw_lines);
+
+    for (i = 0; lines[i] != NULL; i++) {
+        /* Check if line contains any Indonesian month name */
+        month_idx = -1;
+        month_text = NULL;
+        for (j = 0; j < 12; j++) {
+            month_text = strstr(lines[i], months[j]);
+            if (month_text) {
+                month_idx = j;
+                break;
+            }
+        }
+        if (month_idx < 0) continue;
+
+        /* Extract the first number in the date line: "Kamis, 23 Juli 2026". */
+        sscanf(lines[i], "%*[^0-9]%d", &day);
+
+        /* Extract the year after the month name, not the day before it. */
+        sscanf(month_text + strlen(months[month_idx]), "%d", &year);
+
+        month = month_idx + 1;
+        break;
+    }
+
+    for (i = 0; lines[i] != NULL; i++) g_free(lines[i]);
+    g_free(lines);
+
+    if (day > 0 && month > 0 && year > 0) {
+        *out_date = g_strdup_printf("%04d:%02d:%02d", year, month, day);
+        return TRUE;
+    }
+
+    *out_date = NULL;
+    return FALSE;
+}
+
 /* Appends a line to the terminal log view. */
 void stampy_append_log(StampyWindow *self, const char *message) {
     GtkTextBuffer *buffer;

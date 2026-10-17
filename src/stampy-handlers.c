@@ -115,6 +115,16 @@ static void on_panel_setting_changed(GtkWidget *widget, gpointer user_data) {
     stampy_save_last_state(self);
 }
 
+static void on_metadata_inject_toggled(GObject *object, GParamSpec *pspec, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    GtkSwitch *btn = GTK_SWITCH(object);
+    if (!self || !STAMPY_IS_WINDOW(self)) return;
+    gboolean active = gtk_switch_get_active(btn);
+    stampy_config_set_bool(STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, active);
+    stampy_render_live_preview(self);
+    stampy_save_last_state(self);
+}
+
 static void on_dropdown_setting_changed(GObject *gobject, GParamSpec *pspec, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
     (void)gobject; (void)pspec;
@@ -154,6 +164,10 @@ void stampy_connect_panel_signals(StampyWindow *self) {
     if (self->btn_t_stroke_color) g_signal_connect(self->btn_t_stroke_color, "color-set", G_CALLBACK(on_panel_setting_changed), self);
     if (self->btn_t_color) g_signal_connect(self->btn_t_color, "color-set", G_CALLBACK(on_panel_setting_changed), self);
     if (self->val_text_spacing) g_signal_connect(self->val_text_spacing, "value-changed", G_CALLBACK(on_panel_setting_changed), self);
+
+    if (self->btn_metadata_inject) g_signal_connect(self->btn_metadata_inject, "notify::active", G_CALLBACK(on_metadata_inject_toggled), self);
+
+    if (self->btn_xlsx_time_exif) g_signal_connect(self->btn_xlsx_time_exif, "notify::active", G_CALLBACK(on_xlsx_time_exif_toggled), self);
 }
 
 /* Rebuilds the file listbox, sorted naturally. */

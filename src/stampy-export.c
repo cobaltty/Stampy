@@ -32,7 +32,8 @@ typedef struct {
     GdkRGBA stroke_color;
 
     int jpeg_quality;
-
+    gboolean title_experimental;  /* inject DOCX text as title/desc metadata */
+    gboolean xlsx_time_exif;      /* inject XLSX clock/jam time as EXIF DateTimeOriginal/Digitized */
     GFile *file_compass;
 } ExportSettingsSnapshot;
 
@@ -242,6 +243,11 @@ static void snapshot_export_settings(StampyWindow *window_self, ExportSettingsSn
         snap->comp_pos_idx = gtk_drop_down_get_selected(GTK_DROP_DOWN(window_self->drop_compass_pos));
         snap->comp_shadow = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(window_self->btn_c_shadow));
     }
+
+    snap->title_experimental = stampy_config_get_bool(STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, FALSE);
+    snap->xlsx_time_exif = stampy_config_get_bool(STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE) ||
+                           (window_self->btn_xlsx_time_exif &&
+                            gtk_switch_get_active(GTK_SWITCH(window_self->btn_xlsx_time_exif)));
 
     if (window_self->val_text_size) {
         GListModel *model;
@@ -733,6 +739,89 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                 g_free(copy_cmd);
                 g_free(quoted_source);
                 g_free(quoted_target);
+            }
+
+            /* Inject DOCX text as title/description metadata (experimental). */
+            if (ctx->snapshot.title_experimental && custom_text && *custom_text != '\0') {
+                char *desc_text = NULL;
+                char *quoted_target = g_shell_quote(out_path);
+                char *cmd;
+
+                if (stampy_extract_project_description(custom_text, &desc_text) && desc_text && *desc_text != '\0') {
+                    cmd = g_strdup_printf(
+                        "%s -overwrite_original -quiet -XMP:Title=\"%s\" -XMP:Description=\"%s\" -XPTitle=\"%s\" -ImageDescription=\"%s\" %s",
+                        g_getenv("STAMPY_EXIFTOOL") ? g_getenv("STAMPY_EXIFTOOL") : "exiftool",
+                        desc_text, desc_text, desc_text, desc_text, quoted_target);
+                    g_spawn_command_line_sync(cmd, NULL, NULL, NULL, NULL);
+                    g_free(cmd);
+                    g_free(desc_text);
+                } else if (desc_text) {
+                    g_free(desc_text);
+                }
+                g_free(quoted_target);
+            }
+
+            /* Inject XLSX clock/jam time + DOCX date into every editable capture-date field. */
+            if (ctx->snapshot.xlsx_time_exif && has_geo && geo_entry.time_val > 0.0) {
+                const char *configured_exiftool = g_getenv("STAMPY_EXIFTOOL");
+                char *exif_cmd;
+                char *docx_date = NULL;
+                char time_part[16] = {0};
+                char new_dt[32] = {0};
+                int total_seconds, hours, minutes, seconds;
+
+                if (configured_exiftool && *configured_exiftool) {
+                    exif_cmd = g_strdup(configured_exiftool);
+                } else if (g_file_test("/app/bin/perl", G_FILE_TEST_IS_EXECUTABLE) &&
+                           g_file_test("/app/bin/exiftool", G_FILE_TEST_EXISTS)) {
+                    exif_cmd = g_strdup("/app/bin/perl /app/bin/exiftool");
+                } else {
+                    exif_cmd = g_strdup("exiftool");
+                }
+
+                /* Extract date from DOCX text: "Kamis, 23 Juli 2026" → "2026:07:23" */
+                stampy_extract_docx_date(custom_text, &docx_date);
+
+                /* Convert Excel time fraction to HH:MM:SS */
+                total_seconds = (int)(geo_entry.time_val * 86400.0 + 0.5);
+                hours = total_seconds / 3600;
+                minutes = (total_seconds % 3600) / 60;
+                seconds = total_seconds % 60;
+                snprintf(time_part, sizeof(time_part), "%02d:%02d:%02d", hours, minutes, seconds);
+
+                if (docx_date) {
+                    snprintf(new_dt, sizeof(new_dt), "%s %s", docx_date, time_part);
+                    char *quoted_target = g_shell_quote(out_path);
+                    char *cmd = g_strdup_printf(
+                        "%s -overwrite_original -quiet "
+                        "-EXIF:DateTimeOriginal=\"%s\" -EXIF:CreateDate=\"%s\" "
+                        "-EXIF:ModifyDate=\"%s\" "
+                        "-XMP-exif:DateTimeOriginal=\"%s\" -XMP-exif:DateTimeDigitized=\"%s\" "
+                        "-XMP-xmp:CreateDate=\"%s\" -XMP-xmp:ModifyDate=\"%s\" "
+                        "-XMP-photoshop:DateCreated=\"%s\" "
+                        "-IPTC:DateCreated=\"%s\" -IPTC:TimeCreated=\"%s\" "
+                        "-GPSDateStamp=\"%s\" -GPSTimeStamp=\"%s\" %s",
+                        exif_cmd,
+                        new_dt, new_dt, new_dt,
+                        new_dt, new_dt, new_dt, new_dt, new_dt,
+                        docx_date, time_part, docx_date, time_part, quoted_target);
+                    gint exit_status = 0;
+                    GError *time_error = NULL;
+
+                    if (!g_spawn_command_line_sync(cmd, NULL, NULL, &exit_status, &time_error) ||
+                        exit_status != 0) {
+                        char *wmsg = g_strdup_printf(
+                            "[WARN] EXIF time write failed for %s: %s",
+                            orig_basename, time_error ? time_error->message : "ExifTool returned an error");
+                        send_progress_to_ui(window_self, 0.0, FALSE, wmsg, FALSE, FALSE);
+                        g_free(wmsg);
+                    }
+                    g_clear_error(&time_error);
+                    g_free(cmd);
+                    g_free(quoted_target);
+                }
+                g_free(docx_date);
+                g_free(exif_cmd);
             }
 
             g_free(src_path);

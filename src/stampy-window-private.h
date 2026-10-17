@@ -12,6 +12,7 @@ typedef struct {
     double longitude;
     double latitude;
     double azimuth_raw;
+    double time_val;  /* Excel time fraction from XLSX column F */
 } GeolocationEntry;
 
 struct _StampyWindow {
@@ -68,6 +69,9 @@ struct _StampyWindow {
     GtkWidget *btn_apply_preset;
     GtkWidget *btn_import_preset;
     GtkWidget *btn_export_preset;
+
+    GtkWidget *btn_metadata_inject;
+    GtkWidget *btn_xlsx_time_exif;
 
     GtkWidget *btn_menu;
     GtkWidget *btn_header_clear;
@@ -131,6 +135,10 @@ void stampy_show_preferences(StampyWindow *self);
 int stampy_get_jpeg_quality(StampyWindow *self);
 void stampy_set_jpeg_quality(StampyWindow *self, int quality);
 
+/* Preferences toggle callbacks. */
+void on_title_exp_toggle_changed(GObject *object, GParamSpec *pspec, gpointer user_data);
+void on_xlsx_time_exif_toggled(GObject *object, GParamSpec *pspec, gpointer user_data);
+
 /* Persistent config store (~/.config/stampy_prefs.json). Single source of
  * truth for all preferences; values are written through on every set call.
  * Main-thread use only. */
@@ -139,6 +147,8 @@ void stampy_set_jpeg_quality(StampyWindow *self, int quality);
 #define STAMPY_CONFIG_KEY_COMPASS_FOLDER "compass-folder"  /* string path, default "" */
 #define STAMPY_CONFIG_KEY_EXPORT_USE_ALL_CORES "export-use-all-cores" /* bool, default TRUE */
 #define STAMPY_CONFIG_KEY_EXPORT_THREAD_COUNT  "export-thread-count"  /* int, 0 = auto (all cores) */
+#define STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL "title-experimental" /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_XLSX_TIME_EXIF "xlsx-time-exif" /* bool, default FALSE */
 /* New preferences only need a key here plus the get/set helpers below. */
 int stampy_config_get_int(const char *key, int fallback);
 void stampy_config_set_int(const char *key, int value);
@@ -161,5 +171,9 @@ void stampy_geo_csv_close(FILE *fp);
 gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char **out_text, char **out_azimuth);
 gboolean stampy_lookup_geolocation_data(StampyWindow *self, int photo_id, GeolocationEntry *out_entry);
 void format_geolocation_text(const GeolocationEntry *entry, char *lat_str, char *lon_str, double *compass_deg);
+/* Extracts project description text (between azimuth and "Index number:") from DOCX watermark text. */
+gboolean stampy_extract_project_description(const char *full_text, char **out_text);
+/* Extracts date "Kamis, 23 Juli 2026" → "2026:07:23" from DOCX watermark text. */
+gboolean stampy_extract_docx_date(const char *full_text, char **out_date);
 
 G_END_DECLS

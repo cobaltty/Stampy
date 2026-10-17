@@ -137,7 +137,7 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
         "  \"t_size\": %d,\n  \"t_spacing\": %d,\n  \"t_margin_x\": %d,\n  \"t_margin_y\": %d,\n  \"t_opacity\": %d,\n  \"t_pos\": \"%s\",\n"
         "  \"t_font\": \"%s\",\n  \"t_align\": \"%s\",\n"
         "  \"t_bold\": %s,\n  \"t_italic\": %s,\n  \"t_underline\": %s,\n"
-        "  \"t_shadow\": %s,\n  \"t_stroke\": %s,\n  \"t_stroke_color\": \"%s\",\n  \"t_color\": \"%s\"\n}\n",
+        "  \"t_shadow\": %s,\n  \"t_stroke\": %s,\n  \"t_stroke_color\": \"%s\",\n  \"t_color\": \"%s\",\n  \"metadata_inject\": %s,\n  \"xlsx_time_exif\": %s\n}\n",
         (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_size)),
         (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_margin_x)),
         (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_margin_y)),
@@ -156,7 +156,9 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_t_underline)) ? "true" : "false",
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_t_shadow)) ? "true" : "false",
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_t_stroke)) ? "true" : "false",
-        color_hex_t_stroke, color_hex_t_color
+        color_hex_t_stroke, color_hex_t_color,
+        gtk_switch_get_active(GTK_SWITCH(self->btn_metadata_inject)) ? "true" : "false",
+        gtk_switch_get_active(GTK_SWITCH(self->btn_xlsx_time_exif)) ? "true" : "false"
     );
 
     if (!g_file_set_contents(filepath, json_data, -1, &error)) {
@@ -294,6 +296,8 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_t_underline), strstr(content, "\"t_underline\": true") != NULL);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_t_shadow), strstr(content, "\"t_shadow\": true") != NULL);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_t_stroke), strstr(content, "\"t_stroke\": true") != NULL);
+    gtk_switch_set_active(GTK_SWITCH(self->btn_metadata_inject), strstr(content, "\"metadata_inject\": true") != NULL);
+    gtk_switch_set_active(GTK_SWITCH(self->btn_xlsx_time_exif), strstr(content, "\"xlsx_time_exif\": true") != NULL);
 
     /* Text alignment. */
     if (strstr(content, "\"t_align\": \"left\"") || strstr(content, "\"alignment\": \"left\""))

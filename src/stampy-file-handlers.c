@@ -11,6 +11,110 @@ static void on_btn_compass_clicked(GtkButton *btn, gpointer user_data);
 static void on_btn_docx_clicked(GtkButton *btn, gpointer user_data);
 static void on_btn_xlsx_clicked(GtkButton *btn, gpointer user_data);
 
+/* Column mapping: maps Excel column letter to field type.
+   field_type: 0=id(NO), 1=longitude(X), 2=latitude(Y), 3=azimuth(Azh), 4=time(Jam) */
+typedef struct {
+    char col_letter;
+    int field_type;
+} ColMapEntry;
+
+typedef struct {
+    ColMapEntry entries[6];
+    int count;
+} ColMap;
+
+/* Scan sheet1.xml row 1 headers to build column-to-field mapping.
+   Returns number of fields found (0 if none matched). */
+static int scan_docx_column_map(const char *xml_buf, ColMap *out_map) {
+    if (!out_map) return 0;
+    out_map->count = 0;
+
+    /* Find first <row> ... </row> block (header row). */
+    const char *row_start = strstr(xml_buf, "<row>");
+    if (!row_start) row_start = strstr(xml_buf, "<row ");
+    if (!row_start) return 0;
+
+    const char *row_end = strstr(row_start, "</row>");
+    if (!row_end) return 0;
+
+    /* Extract cells within this row. */
+    const char *cell_p = row_start;
+    while ((cell_p = strstr(cell_p, "<c r=\"")) != NULL && cell_p < row_end) {
+        char col_letter = cell_p[6];
+        /* Find cell value <v>...</v> */
+        char *v_start = strstr(cell_p, "<v>");
+        if (!v_start || v_start > row_end) {
+            cell_p++;
+            continue;
+        }
+        v_start += 3;
+        char *v_end = strstr(v_start, "</v>");
+        if (!v_end || v_end > row_end) {
+            cell_p++;
+            continue;
+        }
+        int v_len = v_end - v_start;
+        if (v_len <= 0 || v_len >= 64) {
+            cell_p++;
+            continue;
+        }
+        char val_buf[64];
+        strncpy(val_buf, v_start, v_len);
+        val_buf[v_len] = '\0';
+
+        int field_type = -1;
+        /* Match header text (case-insensitive-ish). */
+        if (g_strcasecmp(val_buf, "NO") == 0 || g_str_has_prefix(val_buf, "NO ") ||
+            g_str_has_prefix(val_buf, "NO\t")) {
+            field_type = 0;
+        } else if (g_strcasecmp(val_buf, "X") == 0 || g_str_has_prefix(val_buf, "X ") ||
+                   g_strcasecmp(val_buf, "LONGITUDE") == 0 || g_str_has_prefix(val_buf, "LONGITUDE ") ||
+                   g_strcasecmp(val_buf, "LONG") == 0) {
+            field_type = 1;
+        } else if (g_strcasecmp(val_buf, "Y") == 0 || g_str_has_prefix(val_buf, "Y ") ||
+                   g_strcasecmp(val_buf, "LATITUDE") == 0 || g_str_has_prefix(val_buf, "LATITUDE ") ||
+                   g_strcasecmp(val_buf, "LAT") == 0) {
+            field_type = 2;
+        } else if (g_strcasecmp(val_buf, "AZH") == 0 || g_strcasecmp(val_buf, "AZIMUTH") == 0 ||
+                   g_str_has_prefix(val_buf, "AZH ") || g_str_has_prefix(val_buf, "AZIMUTH ")) {
+            field_type = 3;
+        } else if (g_strcasecmp(val_buf, "JAM") == 0 || g_strcasecmp(val_buf, "TIME") == 0 ||
+                   g_str_has_prefix(val_buf, "JAM ") || g_str_has_prefix(val_buf, "TIME ") ||
+                   g_strcasecmp(val_buf, "WAKTU") == 0) {
+            field_type = 4;
+        }
+
+        if (field_type >= 0 && out_map->count < 6) {
+            int exists = 0;
+            for (int k = 0; k < out_map->count; k++) {
+                if (out_map->entries[k].col_letter == col_letter) {
+                    exists = 1;
+                    break;
+                }
+            }
+            if (!exists) {
+                out_map->entries[out_map->count].col_letter = col_letter;
+                out_map->entries[out_map->count].field_type = field_type;
+                out_map->count++;
+            }
+        }
+
+        cell_p++;
+    }
+
+    return out_map->count;
+}
+
+/* Get field type for a column letter from the map. */
+static int colmap_get_field_type(const ColMap *map, char col_letter) {
+    if (!map) return -1;
+    for (int i = 0; i < map->count; i++) {
+        if (map->entries[i].col_letter == col_letter)
+            return map->entries[i].field_type;
+    }
+    return -1;
+}
+
 /* Parse a coordinate string (from a string Excel cell).
    Handles decimal ("-6,123456" / "6,123456 S"), DMS ("6°7'24.44\" S"),
    comma or period as decimal separator,
@@ -170,6 +274,9 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
         pclose(fp);
 
         if (xml_buf->len > 0) {
+            ColMap col_map;
+            scan_docx_column_map(xml_buf->str, &col_map);
+
             char *row_p = xml_buf->str;
 
             while ((row_p = strstr(row_p, "<row")) != NULL) {
@@ -178,7 +285,8 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                 double current_lon = 0.0;
                 double current_lat = 0.0;
                 double current_azimuth = 0.0;
-                gboolean has_id = FALSE, has_lon = FALSE, has_lat = FALSE;
+                double current_time = 0.0;
+                gboolean has_id = FALSE, has_lon = FALSE, has_lat = FALSE, has_time = FALSE;
                 char *cell_p;
 
                 if (!row_end) break;
@@ -213,36 +321,44 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                                     int ss_idx = atoi(val_str);
                                     if (ss_idx >= 0 && ss_idx < (int)shared_strings->len) {
                                         const char *cell_str = g_ptr_array_index(shared_strings, ss_idx);
-                                        if (col_letter == 'D') {
+                                        int field_type = colmap_get_field_type(&col_map, col_letter);
+                                        if (field_type == 3) {
                                             val = parse_azimuth_string(cell_str);
                                         } else {
                                             val = parse_coord_string(cell_str);
                                         }
                                     }
-                                } else if (col_letter == 'B' || col_letter == 'C') {
-                                    /* Lat/Lon: use parse_coord_string to handle comma decimals & direction */
-                                    val = parse_coord_string(val_str);
-                                } else if (col_letter == 'D') {
-                                    /* Azimuth numeric cell: user enters "335,044" meaning 335.044,
-                                       but Excel stores 335044 (comma was thousands separator).
-                                       If raw value > 360, assume 3 decimal places were intended. */
-                                    val = g_ascii_strtod(val_str, NULL);
-                                    if (val > 360.0) val = val / 1000.0;
                                 } else {
-                                    val = g_ascii_strtod(val_str, NULL);
+                                    int field_type = colmap_get_field_type(&col_map, col_letter);
+                                    if (field_type == 1 || field_type == 2) {
+                                        /* Lat/Lon: use parse_coord_string to handle comma decimals & direction */
+                                        val = parse_coord_string(val_str);
+                                    } else if (field_type == 3) {
+                                        /* Azimuth numeric cell: user enters "335,044" meaning 335.044,
+                                           but Excel stores 335044 (comma was thousands separator).
+                                           If raw value > 360, assume 3 decimal places were intended. */
+                                        val = g_ascii_strtod(val_str, NULL);
+                                        if (val > 360.0) val = val / 1000.0;
+                                    } else {
+                                        val = g_ascii_strtod(val_str, NULL);
+                                    }
                                 }
 
-                                if (col_letter == 'A') {
+                                int field_type = colmap_get_field_type(&col_map, col_letter);
+                                if (field_type == 0) {
                                     current_id = (int)val;
                                     has_id = TRUE;
-                                } else if (col_letter == 'B') {
+                                } else if (field_type == 1) {
                                     current_lon = val;
                                     has_lon = TRUE;
-                                } else if (col_letter == 'C') {
+                                } else if (field_type == 2) {
                                     current_lat = val;
                                     has_lat = TRUE;
-                                } else if (col_letter == 'D') {
+                                } else if (field_type == 3) {
                                     current_azimuth = val;
+                                } else if (field_type == 4) {
+                                    current_time = val;
+                                    has_time = TRUE;
                                 }
                             }
                         }
@@ -265,6 +381,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                     entry->longitude = current_lon;
                     entry->latitude = current_lat;
                     entry->azimuth_raw = current_azimuth;
+                    entry->time_val = current_time;
 
                     snprintf(key_str, sizeof(key_str), "%d", current_id);
                     g_hash_table_insert(self->geo_table, g_strdup(key_str), entry);
