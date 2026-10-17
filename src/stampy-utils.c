@@ -211,8 +211,9 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char 
             int j = i + 1;
             int count = 0;
 
-            /* Collect at most 6 data lines as a safeguard. */
-            while (lines[j] != NULL && count < 6) {
+            /* Limits collected lines as a safeguard. */
+            /* increased to 8 due to new new data*/
+            while (lines[j] != NULL && count < 8) {
 
                 /* A digits-only line starts the next photo block. */
                 gboolean has_digit = FALSE;

@@ -66,7 +66,7 @@ prefs_migrate_from_last_state (void)
   if (!json_object_has_member (prefs_obj, STAMPY_CONFIG_KEY_JPEG_QUALITY) &&
       strstr (content, "\"jpeg_quality\":") != NULL)
     {
-      int q = 90;
+      int q = 80;
       if (sscanf (strstr (content, "\"jpeg_quality\":"),
                   "\"jpeg_quality\": %d", &q) == 1)
         {

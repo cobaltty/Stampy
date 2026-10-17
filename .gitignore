@@ -1,7 +1,24 @@
-[?2004l_build/
+# Meson / manual build directories
+_build/
 build/
 build-dir/
+_flatpak_build/
+
+# Flatpak builder outputs
+flatpak_app/
 .flatpak-builder/
 repo/
 *.flatpak
+
+# Crash dumps and captures
 System*
+core
+core.*
+vgcore.*
+
+# Editor and OS leftovers
+*~
+*.swp
+.vscode/
+.idea/
+.DS_Store

@@ -1,6 +1,6 @@
 #include "stampy-window-private.h"
 
-#define STAMPY_JPEG_QUALITY_DEFAULT 90
+#define STAMPY_JPEG_QUALITY_DEFAULT 80
 #define STAMPY_JPEG_QUALITY_MIN 1
 #define STAMPY_JPEG_QUALITY_MAX 100
 
