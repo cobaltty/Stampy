@@ -149,6 +149,8 @@ void on_xlsx_time_exif_toggled(GObject *object, GParamSpec *pspec, gpointer user
 #define STAMPY_CONFIG_KEY_EXPORT_THREAD_COUNT  "export-thread-count"  /* int, 0 = auto (all cores) */
 #define STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL "title-experimental" /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_XLSX_TIME_EXIF "xlsx-time-exif" /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_USE_NATIVE_METADATA "use-native-metadata" /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_BATCH_EXIFTOOL "batch-exiftool" /* bool, default FALSE */
 /* New preferences only need a key here plus the get/set helpers below. */
 int stampy_config_get_int(const char *key, int fallback);
 void stampy_config_set_int(const char *key, int value);
@@ -175,5 +177,7 @@ void format_geolocation_text(const GeolocationEntry *entry, char *lat_str, char 
 gboolean stampy_extract_project_description(const char *full_text, char **out_text);
 /* Extracts date "Kamis, 23 Juli 2026" → "2026:07:23" from DOCX watermark text. */
 gboolean stampy_extract_docx_date(const char *full_text, char **out_date);
+/* Smart ID extractor from filename ("11.jpg", "PU.245 (11).jpg", "PU.245_11.jpg" -> 11). */
+int stampy_extract_id_from_filename(const char *filename);
 
 G_END_DECLS

@@ -19,87 +19,146 @@ typedef struct {
 } ColMapEntry;
 
 typedef struct {
-    ColMapEntry entries[6];
+    ColMapEntry entries[16];
     int count;
 } ColMap;
 
 /* Scan sheet1.xml row 1 headers to build column-to-field mapping.
-   Returns number of fields found (0 if none matched). */
-static int scan_docx_column_map(const char *xml_buf, ColMap *out_map) {
+   Resolves shared strings via shared_strings table.
+   Returns number of fields mapped. */
+static int scan_excel_column_map(const char *xml_buf, GPtrArray *shared_strings, ColMap *out_map) {
+    const char *row_start;
+    const char *row_end;
+    const char *cell_p;
+
     if (!out_map) return 0;
     out_map->count = 0;
+    if (!xml_buf) return 0;
 
-    /* Find first <row> ... </row> block (header row). */
-    const char *row_start = strstr(xml_buf, "<row>");
-    if (!row_start) row_start = strstr(xml_buf, "<row ");
+    row_start = strstr(xml_buf, "<row");
     if (!row_start) return 0;
 
-    const char *row_end = strstr(row_start, "</row>");
+    row_end = strstr(row_start, "</row>");
     if (!row_end) return 0;
 
-    /* Extract cells within this row. */
-    const char *cell_p = row_start;
+    cell_p = row_start;
     while ((cell_p = strstr(cell_p, "<c r=\"")) != NULL && cell_p < row_end) {
-        char col_letter = cell_p[6];
-        /* Find cell value <v>...</v> */
-        char *v_start = strstr(cell_p, "<v>");
-        if (!v_start || v_start > row_end) {
-            cell_p++;
-            continue;
-        }
-        v_start += 3;
-        char *v_end = strstr(v_start, "</v>");
-        if (!v_end || v_end > row_end) {
-            cell_p++;
-            continue;
-        }
-        int v_len = v_end - v_start;
-        if (v_len <= 0 || v_len >= 64) {
-            cell_p++;
-            continue;
-        }
-        char val_buf[64];
-        strncpy(val_buf, v_start, v_len);
-        val_buf[v_len] = '\0';
+        char col_letter = '\0';
+        const char *r_ptr = cell_p + 6;
+        char *c_end;
+        gboolean is_string = FALSE;
+        const char *header_text = NULL;
+        char val_buf[64] = {0};
 
-        int field_type = -1;
-        /* Match header text (case-insensitive-ish). */
-        if (g_strcasecmp(val_buf, "NO") == 0 || g_str_has_prefix(val_buf, "NO ") ||
-            g_str_has_prefix(val_buf, "NO\t")) {
-            field_type = 0;
-        } else if (g_strcasecmp(val_buf, "X") == 0 || g_str_has_prefix(val_buf, "X ") ||
-                   g_strcasecmp(val_buf, "LONGITUDE") == 0 || g_str_has_prefix(val_buf, "LONGITUDE ") ||
-                   g_strcasecmp(val_buf, "LONG") == 0) {
-            field_type = 1;
-        } else if (g_strcasecmp(val_buf, "Y") == 0 || g_str_has_prefix(val_buf, "Y ") ||
-                   g_strcasecmp(val_buf, "LATITUDE") == 0 || g_str_has_prefix(val_buf, "LATITUDE ") ||
-                   g_strcasecmp(val_buf, "LAT") == 0) {
-            field_type = 2;
-        } else if (g_strcasecmp(val_buf, "AZH") == 0 || g_strcasecmp(val_buf, "AZIMUTH") == 0 ||
-                   g_str_has_prefix(val_buf, "AZH ") || g_str_has_prefix(val_buf, "AZIMUTH ")) {
-            field_type = 3;
-        } else if (g_strcasecmp(val_buf, "JAM") == 0 || g_strcasecmp(val_buf, "TIME") == 0 ||
-                   g_str_has_prefix(val_buf, "JAM ") || g_str_has_prefix(val_buf, "TIME ") ||
-                   g_strcasecmp(val_buf, "WAKTU") == 0) {
-            field_type = 4;
+        if (g_ascii_isalpha(*r_ptr)) {
+            col_letter = g_ascii_toupper(*r_ptr);
+        }
+        if (!col_letter) {
+            cell_p++;
+            continue;
         }
 
-        if (field_type >= 0 && out_map->count < 6) {
-            int exists = 0;
-            for (int k = 0; k < out_map->count; k++) {
-                if (out_map->entries[k].col_letter == col_letter) {
-                    exists = 1;
-                    break;
+        c_end = strchr(cell_p, '>');
+        if (!c_end || c_end > row_end) {
+            cell_p++;
+            continue;
+        }
+
+        if (strstr(cell_p, "t=\"s\"") && strstr(cell_p, "t=\"s\"") < c_end) {
+            is_string = TRUE;
+        }
+
+        /* Extract <v>...</v> */
+        {
+            char *v_start = strstr(cell_p, "<v>");
+            if (v_start && v_start < row_end) {
+                v_start += 3;
+                char *v_end = strstr(v_start, "</v>");
+                if (v_end && v_end < row_end) {
+                    int v_len = v_end - v_start;
+                    if (v_len > 0 && v_len < (int)sizeof(val_buf)) {
+                        strncpy(val_buf, v_start, v_len);
+                        val_buf[v_len] = '\0';
+
+                        if (is_string) {
+                            int ss_idx = atoi(val_buf);
+                            if (shared_strings && ss_idx >= 0 && ss_idx < (int)shared_strings->len) {
+                                header_text = g_ptr_array_index(shared_strings, ss_idx);
+                            }
+                        } else {
+                            header_text = val_buf;
+                        }
+                    }
                 }
             }
-            if (!exists) {
-                out_map->entries[out_map->count].col_letter = col_letter;
-                out_map->entries[out_map->count].field_type = field_type;
-                out_map->count++;
+        }
+
+        /* If no <v>, check for inline string <t>...</t> */
+        if (!header_text) {
+            char *t_start = strstr(cell_p, "<t>");
+            if (t_start && t_start < row_end) {
+                t_start += 3;
+                char *t_end = strstr(t_start, "</t>");
+                if (t_end && t_end < row_end) {
+                    int t_len = t_end - t_start;
+                    if (t_len > 0 && t_len < (int)sizeof(val_buf)) {
+                        strncpy(val_buf, t_start, t_len);
+                        val_buf[t_len] = '\0';
+                        header_text = val_buf;
+                    }
+                }
             }
         }
 
-        cell_p++;
+        if (header_text && *header_text) {
+            char clean[64];
+            int clen = 0;
+            int field_type = -1;
+
+            for (const char *p = header_text; *p && clen < (int)sizeof(clean) - 1; p++) {
+                if (g_ascii_isalnum(*p)) {
+                    clean[clen++] = g_ascii_tolower(*p);
+                }
+            }
+            clean[clen] = '\0';
+
+            if (g_strcmp0(clean, "no") == 0 || g_strcmp0(clean, "nopu") == 0 ||
+                g_strcmp0(clean, "nomor") == 0 || g_strcmp0(clean, "id") == 0 ||
+                g_strcmp0(clean, "number") == 0) {
+                field_type = 0; /* ID */
+            } else if (g_strcmp0(clean, "x") == 0 || strstr(clean, "long") != NULL ||
+                       strstr(clean, "bujur") != NULL || g_str_has_prefix(clean, "x")) {
+                field_type = 1; /* Longitude */
+            } else if (g_strcmp0(clean, "y") == 0 || strstr(clean, "lat") != NULL ||
+                       strstr(clean, "lintang") != NULL || g_str_has_prefix(clean, "y")) {
+                field_type = 2; /* Latitude */
+            } else if (strstr(clean, "azh") != NULL || strstr(clean, "azim") != NULL ||
+                       strstr(clean, "arah") != NULL || strstr(clean, "head") != NULL) {
+                field_type = 3; /* Azimuth */
+            } else if (strstr(clean, "jam") != NULL || strstr(clean, "time") != NULL ||
+                       strstr(clean, "waktu") != NULL) {
+                field_type = 4; /* Time */
+            }
+
+            if (field_type >= 0 && out_map->count < 16) {
+                int found_idx = -1;
+                for (int k = 0; k < out_map->count; k++) {
+                    if (out_map->entries[k].col_letter == col_letter) {
+                        found_idx = k;
+                        break;
+                    }
+                }
+                if (found_idx >= 0) {
+                    out_map->entries[found_idx].field_type = field_type;
+                } else {
+                    out_map->entries[out_map->count].col_letter = col_letter;
+                    out_map->entries[out_map->count].field_type = field_type;
+                    out_map->count++;
+                }
+            }
+        }
+
+        cell_p = c_end;
     }
 
     return out_map->count;
@@ -275,9 +334,31 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
 
         if (xml_buf->len > 0) {
             ColMap col_map;
-            scan_docx_column_map(xml_buf->str, &col_map);
+            gboolean has_map_lon = FALSE;
+            gboolean has_map_lat = FALSE;
+            char *row_p;
+            int k;
 
-            char *row_p = xml_buf->str;
+            scan_excel_column_map(xml_buf->str, shared_strings, &col_map);
+
+            for (k = 0; k < col_map.count; k++) {
+                if (col_map.entries[k].field_type == 1) has_map_lon = TRUE;
+                if (col_map.entries[k].field_type == 2) has_map_lat = TRUE;
+            }
+
+            if (!has_map_lon || !has_map_lat) {
+                /* Safe default fallback if auto-detection misses coordinates */
+                col_map.count = 0;
+                col_map.entries[0] = (ColMapEntry){'A', 0};
+                col_map.entries[1] = (ColMapEntry){'B', 1};
+                col_map.entries[2] = (ColMapEntry){'C', 2};
+                col_map.entries[3] = (ColMapEntry){'D', 3};
+                col_map.entries[4] = (ColMapEntry){'E', 4};
+                col_map.entries[5] = (ColMapEntry){'F', 4};
+                col_map.count = 6;
+            }
+
+            row_p = xml_buf->str;
 
             while ((row_p = strstr(row_p, "<row")) != NULL) {
                 char *row_end = strstr(row_p, "</row>");
@@ -315,21 +396,27 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
 
                             if (len < sizeof(val_str)) {
                                 double val = 0.0;
+                                int field_type = colmap_get_field_type(&col_map, col_letter);
                                 strncpy(val_str, v_start, len);
 
                                 if (is_string) {
                                     int ss_idx = atoi(val_str);
                                     if (ss_idx >= 0 && ss_idx < (int)shared_strings->len) {
                                         const char *cell_str = g_ptr_array_index(shared_strings, ss_idx);
-                                        int field_type = colmap_get_field_type(&col_map, col_letter);
                                         if (field_type == 3) {
                                             val = parse_azimuth_string(cell_str);
+                                        } else if (field_type == 4) {
+                                            int h = 0, m = 0, s = 0;
+                                            if (sscanf(cell_str, "%d:%d:%d", &h, &m, &s) >= 2) {
+                                                val = (h * 3600.0 + m * 60.0 + s) / 86400.0;
+                                            } else {
+                                                val = g_ascii_strtod(cell_str, NULL);
+                                            }
                                         } else {
                                             val = parse_coord_string(cell_str);
                                         }
                                     }
                                 } else {
-                                    int field_type = colmap_get_field_type(&col_map, col_letter);
                                     if (field_type == 1 || field_type == 2) {
                                         /* Lat/Lon: use parse_coord_string to handle comma decimals & direction */
                                         val = parse_coord_string(val_str);
@@ -339,12 +426,18 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                                            If raw value > 360, assume 3 decimal places were intended. */
                                         val = g_ascii_strtod(val_str, NULL);
                                         if (val > 360.0) val = val / 1000.0;
+                                    } else if (field_type == 4) {
+                                        int h = 0, m = 0, s = 0;
+                                        if (sscanf(val_str, "%d:%d:%d", &h, &m, &s) >= 2) {
+                                            val = (h * 3600.0 + m * 60.0 + s) / 86400.0;
+                                        } else {
+                                            val = g_ascii_strtod(val_str, NULL);
+                                        }
                                     } else {
                                         val = g_ascii_strtod(val_str, NULL);
                                     }
                                 }
 
-                                int field_type = colmap_get_field_type(&col_map, col_letter);
                                 if (field_type == 0) {
                                     current_id = (int)val;
                                     has_id = TRUE;

@@ -229,6 +229,29 @@ on_use_all_cores_changed (GObject *object, GParamSpec *pspec, gpointer user_data
     gtk_widget_set_sensitive (GTK_WIDGET (user_data), !active);
 }
 
+static void
+on_use_native_metadata_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  gboolean active;
+  (void) pspec;
+
+  active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
+  stampy_config_set_bool (STAMPY_CONFIG_KEY_USE_NATIVE_METADATA, active);
+  if (user_data != NULL)
+    gtk_widget_set_sensitive (GTK_WIDGET (user_data), !active);
+}
+
+static void
+on_batch_exiftool_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  gboolean active;
+  (void) pspec;
+  (void) user_data;
+
+  active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
+  stampy_config_set_bool (STAMPY_CONFIG_KEY_BATCH_EXIFTOOL, active);
+}
+
 void
 stampy_show_preferences (StampyWindow *self)
 {
@@ -238,10 +261,13 @@ stampy_show_preferences (StampyWindow *self)
   AdwPreferencesGroup *perf_group;
   AdwPreferencesGroup *exp_group;
   AdwSwitchRow *cores_switch;
+  AdwSwitchRow *native_meta_switch;
+  AdwSwitchRow *batch_exiftool_switch;
   AdwSwitchRow *title_exp_toggle;
   AdwSwitchRow *xlsx_time_toggle;
   GtkWidget *threads_row;
   gboolean use_all;
+  gboolean use_native;
   int n_cpus;
   char *subtitle;
 
@@ -252,6 +278,7 @@ stampy_show_preferences (StampyWindow *self)
   if (n_cpus < 1)
     n_cpus = 1;
   use_all = stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_USE_ALL_CORES, TRUE);
+  use_native = stampy_config_get_bool (STAMPY_CONFIG_KEY_USE_NATIVE_METADATA, FALSE);
 
   dialog = ADW_DIALOG (adw_preferences_dialog_new ());
   adw_dialog_set_title (dialog, "Preferences");
@@ -309,6 +336,27 @@ stampy_show_preferences (StampyWindow *self)
   g_signal_connect (cores_switch, "notify::active",
                     G_CALLBACK (on_use_all_cores_changed),
                     threads_row);
+
+  native_meta_switch = ADW_SWITCH_ROW (adw_switch_row_new ());
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (native_meta_switch), "Native metadata engine (gexiv2)");
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (native_meta_switch),
+                               "In-memory EXIF/XMP processing. Much faster than spawning ExifTool.");
+  adw_switch_row_set_active (native_meta_switch, use_native);
+  adw_preferences_group_add (perf_group, GTK_WIDGET (native_meta_switch));
+
+  batch_exiftool_switch = ADW_SWITCH_ROW (adw_switch_row_new ());
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (batch_exiftool_switch), "Batch ExifTool execution (-@)");
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (batch_exiftool_switch),
+                               "Execute ExifTool once for the entire batch. Much faster for 1000+ photos.");
+  adw_switch_row_set_active (batch_exiftool_switch,
+      stampy_config_get_bool (STAMPY_CONFIG_KEY_BATCH_EXIFTOOL, FALSE));
+  gtk_widget_set_sensitive (GTK_WIDGET (batch_exiftool_switch), !use_native);
+  g_signal_connect (batch_exiftool_switch, "notify::active",
+                    G_CALLBACK (on_batch_exiftool_changed), NULL);
+  adw_preferences_group_add (perf_group, GTK_WIDGET (batch_exiftool_switch));
+
+  g_signal_connect (native_meta_switch, "notify::active",
+                    G_CALLBACK (on_use_native_metadata_changed), batch_exiftool_switch);
 
   /* Title experimental toggle */
   title_exp_toggle = ADW_SWITCH_ROW (adw_switch_row_new ());

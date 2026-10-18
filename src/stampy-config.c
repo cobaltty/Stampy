@@ -9,6 +9,7 @@
 #include "stampy-window-private.h"
 
 #include <string.h>
+#include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
 
 #define STAMPY_PREFS_FILENAME "stampy_prefs.json"
@@ -30,6 +31,13 @@ prefs_save (void)
 
   if (!prefs_obj || !prefs_path)
     return;
+
+  /* Ensure the config directory exists (fresh installs may lack it). */
+  {
+    g_autofree char *dir = g_path_get_dirname (prefs_path);
+    if (dir)
+      g_mkdir_with_parents (dir, 0755);
+  }
 
   gen = json_generator_new ();
   json_generator_set_pretty (gen, TRUE);
@@ -135,8 +143,14 @@ prefs_ensure_loaded (void)
         }
       else
         {
-          g_warning ("[Config] Failed to load %s: %s (using defaults)",
-                     prefs_path, error ? error->message : "unknown error");
+          /* Missing/empty config on a fresh launch is expected: start with
+             defaults silently. Only warn when an existing, non-empty file
+             is actually corrupt. */
+          GStatBuf st;
+          gboolean nonempty = (g_stat (prefs_path, &st) == 0 && st.st_size > 0);
+          if (nonempty)
+            g_warning ("[Config] Failed to load %s: %s (using defaults)",
+                       prefs_path, error ? error->message : "unknown error");
           g_clear_error (&error);
         }
       g_object_unref (parser);

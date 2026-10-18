@@ -4,31 +4,102 @@
 #include <string.h>
 #include <math.h>
 
-/* Extracts the digit sequence from a string ("2501.jpg" -> "2501"). */
-static char *extract_pure_id(const char *input) {
-    GString *str;
-    char *dup;
+/* Smart ID extractor from filename ("11.jpg", "PU.245 (11).jpg", "PU.245_11.jpg" -> 11). */
+int stampy_extract_id_from_filename(const char *filename) {
+    char *basename;
     char *dot;
     const char *p;
+    int id_val = -1;
+    gboolean all_digits = TRUE;
 
-    if (!input) return NULL;
+    if (!filename || *filename == '\0') return -1;
 
-    str = g_string_new("");
-    for (p = input; *p; p++) {
-        if (g_ascii_isdigit(*p)) {
-            g_string_append_c(str, *p);
+    basename = g_path_get_basename(filename);
+    if (!basename) return -1;
+
+    dot = strrchr(basename, '.');
+    if (dot) *dot = '\0';
+
+    /* 1. Check if the stem is purely digits: "11" */
+    for (p = basename; *p; p++) {
+        if (!g_ascii_isdigit(*p)) {
+            all_digits = FALSE;
+            break;
+        }
+    }
+    if (all_digits && *basename != '\0') {
+        id_val = atoi(basename);
+        g_free(basename);
+        return id_val;
+    }
+
+    /* 2. Check for number inside parentheses: "PU.245 (11)" */
+    {
+        char *open_p = strrchr(basename, '(');
+        if (open_p) {
+            char *close_p = strchr(open_p, ')');
+            if (close_p && close_p > open_p + 1) {
+                int cand = atoi(open_p + 1);
+                if (cand > 0) {
+                    g_free(basename);
+                    return cand;
+                }
+            }
         }
     }
 
-    if (str->len > 0) {
-        return g_string_free(str, FALSE);
+    /* 3. Check for number at end after separator: "PU.245_11", "PU.245-11", "PU.245 11" */
+    p = basename + strlen(basename) - 1;
+    while (p >= basename && g_ascii_isdigit(*p)) p--;
+    if (p >= basename && (*p == '_' || *p == '-' || *p == ' ') && g_ascii_isdigit(*(p + 1))) {
+        id_val = atoi(p + 1);
+        if (id_val > 0) {
+            g_free(basename);
+            return id_val;
+        }
     }
-    g_string_free(str, TRUE);
 
-    dup = g_strdup(input);
-    dot = strrchr(dup, '.');
-    if (dot) *dot = '\0';
-    return dup;
+    /* 4. Check for number at start before separator: "11_PU.245", "11-PU.245", "11 PU.245" */
+    p = basename;
+    while (*p && g_ascii_isdigit(*p)) p++;
+    if (p > basename && (*p == '_' || *p == '-' || *p == ' ')) {
+        id_val = atoi(basename);
+        if (id_val > 0) {
+            g_free(basename);
+            return id_val;
+        }
+    }
+
+    /* 5. Fallback: concatenate all digits */
+    {
+        GString *digits = g_string_new("");
+        for (p = basename; *p; p++) {
+            if (g_ascii_isdigit(*p)) {
+                g_string_append_c(digits, *p);
+            }
+        }
+        if (digits->len > 0) {
+            id_val = atoi(digits->str);
+        }
+        g_string_free(digits, TRUE);
+    }
+
+    g_free(basename);
+    return id_val;
+}
+
+/* Extracts the pure ID string ("PU.245 (11).jpg" -> "11"). */
+static char *extract_pure_id(const char *input) {
+    int id_val;
+
+    if (!input) return NULL;
+
+    id_val = stampy_extract_id_from_filename(input);
+    if (id_val > 0) {
+        return g_strdup_printf("%d", id_val);
+    }
+
+    return g_strdup(input);
 }
 
 /* Normalizes a raw azimuth value into the [0, 360) range. */
@@ -212,8 +283,7 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char 
             int count = 0;
 
             /* Limits collected lines as a safeguard. */
-            /* increased to 8 due to new new data*/
-            while (lines[j] != NULL && count < 8) {
+            while (lines[j] != NULL && count < 32) {
 
                 /* A digits-only line starts the next photo block. */
                 gboolean has_digit = FALSE;
@@ -287,18 +357,26 @@ gboolean stampy_extract_project_description(const char *full_text, char **out_te
     result = g_string_new("");
 
     for (i = 0; lines[i] != NULL; i++) {
-        /* Detect azimuth line: contains degree symbol and direction letter */
+        /* Detect azimuth line: contains degree symbol (either ° or º) or compass direction */
         if (!started) {
-            if (strchr(lines[i], '°') && (strchr(lines[i], 'N') || strchr(lines[i], 'S') ||
-                strchr(lines[i], 'E') || strchr(lines[i], 'W'))) {
+            gboolean has_deg = (strstr(lines[i], "°") != NULL || strstr(lines[i], "º") != NULL);
+            gboolean has_dir = (strchr(lines[i], 'N') != NULL || strchr(lines[i], 'S') != NULL ||
+                                strchr(lines[i], 'E') != NULL || strchr(lines[i], 'W') != NULL);
+            /* Skip coordinate lines which have commas and coordinates */
+            gboolean is_coord_line = (strchr(lines[i], ',') != NULL && has_dir);
+
+            if ((has_deg && has_dir) || (!is_coord_line && has_dir && i == 1)) {
                 found_azimuth = TRUE;
                 started = TRUE;
             }
             continue;
         }
 
-        /* Stop at "Index number:" line */
-        if (g_str_has_prefix(lines[i], "Index number:")) break;
+        /* Stop at "Index number:" line or date line */
+        if (g_ascii_strncasecmp(lines[i], "Index number:", 13) == 0 ||
+            g_ascii_strncasecmp(lines[i], "Index:", 6) == 0) {
+            break;
+        }
 
         if (result->len > 0) g_string_append_c(result, ' ');
         g_string_append(result, lines[i]);
@@ -320,15 +398,13 @@ gboolean stampy_extract_project_description(const char *full_text, char **out_te
 /* Extracts date "Kamis, 23 Juli 2026" → "2026:07:23" from DOCX watermark text. */
 gboolean stampy_extract_docx_date(const char *full_text, char **out_date) {
     static const char *months[] = {
-        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-        "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+        "januari", "februari", "maret", "april", "mei", "juni",
+        "juli", "agustus", "september", "oktober", "november", "desember"
     };
     char **raw_lines;
     char **lines;
-    GString *result;
-    int i, j, month_idx;
+    int i, j;
     int day = 0, year = 0, month = 0;
-    const char *month_text;
 
     if (!full_text || !out_date) return FALSE;
 
@@ -342,26 +418,50 @@ gboolean stampy_extract_docx_date(const char *full_text, char **out_date) {
     g_strfreev(raw_lines);
 
     for (i = 0; lines[i] != NULL; i++) {
-        /* Check if line contains any Indonesian month name */
-        month_idx = -1;
-        month_text = NULL;
+        char *lower_line = g_utf8_strdown(lines[i], -1);
+        int month_idx = -1;
+        const char *m_pos = NULL;
+
         for (j = 0; j < 12; j++) {
-            month_text = strstr(lines[i], months[j]);
-            if (month_text) {
+            m_pos = strstr(lower_line, months[j]);
+            if (m_pos) {
                 month_idx = j;
                 break;
             }
         }
-        if (month_idx < 0) continue;
 
-        /* Extract the first number in the date line: "Kamis, 23 Juli 2026". */
-        sscanf(lines[i], "%*[^0-9]%d", &day);
+        if (month_idx >= 0 && m_pos) {
+            /* 1. Extract day: scan backwards from month position for digits */
+            const char *p = m_pos;
+            while (p > lower_line && !g_ascii_isdigit(*(p - 1))) p--;
+            if (p > lower_line && g_ascii_isdigit(*(p - 1))) {
+                while (p > lower_line && g_ascii_isdigit(*(p - 1))) p--;
+                day = atoi(p);
+            }
 
-        /* Extract the year after the month name, not the day before it. */
-        sscanf(month_text + strlen(months[month_idx]), "%d", &year);
+            /* 2. Extract year: scan forwards after month for 4 consecutive digits */
+            const char *yp = m_pos + strlen(months[month_idx]);
+            while (*yp) {
+                if (g_ascii_isdigit(yp[0]) && g_ascii_isdigit(yp[1]) &&
+                    g_ascii_isdigit(yp[2]) && g_ascii_isdigit(yp[3])) {
+                    year = (yp[0]-'0')*1000 + (yp[1]-'0')*100 + (yp[2]-'0')*10 + (yp[3]-'0');
+                    break;
+                }
+                yp++;
+            }
 
-        month = month_idx + 1;
-        break;
+            month = month_idx + 1;
+            g_free(lower_line);
+            if (day > 0 && day <= 31 && year >= 1970 && year <= 2100) {
+                break;
+            }
+            day = 0;
+            year = 0;
+            month = 0;
+            continue;
+        }
+
+        g_free(lower_line);
     }
 
     for (i = 0; lines[i] != NULL; i++) g_free(lines[i]);

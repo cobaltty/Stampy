@@ -504,19 +504,22 @@ static void on_whats_new_activated(GSimpleAction *action, GVariant *parameter, g
     gtk_widget_set_hexpand(content, TRUE);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), content);
 
-    gtk_box_append(GTK_BOX(content), whats_new_heading("Changes"));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Preferences dialog in the hamburger menu (Ctrl+,) with export settings."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("JPEG compress quality with slider and typeable value."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Preferences, compass folder and lock, and the selected preset are remembered across restarts."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Export thread controls: use all CPU cores automatically or set a manual worker count."));
+    gtk_box_append(GTK_BOX(content), whats_new_heading("Metadata engine"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Preferences now let you pick the metadata engine: per-image ExifTool, a single ExifTool call per photo, batched ExifTool (-@), or the native in-memory gexiv2 engine."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Batched and native engines avoid spawning a process per photo, which is much faster for large exports."));
     gtk_box_append(GTK_BOX(content), whats_new_heading("Experimental image properties"));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Optionally inject DOCX watermark text into exported image title and description metadata."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Optionally inject XLSX clock/time values into EXIF DateTimeOriginal, DateTimeDigitized, and DateTime."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Preferences and main-panel metadata switches stay synchronized."));
     gtk_box_append(GTK_BOX(content), whats_new_heading("Metadata improvements"));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("XLSX columns for ID, longitude, latitude, azimuth, and time are detected from the header row."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Indonesian dates in DOCX watermark text are parsed for EXIF date/time metadata (for example, \"Kamis, 23 Juli 2026\" becomes \"2026:07:23\")."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Indonesian dates in DOCX watermark text are combined with the XLSX clock/time into a full EXIF date/time (for example, \"Kamis, 23 Juli 2026\" + 10:17:57 becomes \"2026:07:23 10:17:57\")."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Dates without a time default to 00:00:00 so EXIF tags always stay valid."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("IPTC DateCreated is written in YYYY-MM-DD format."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Filenames with plot prefixes match the right row (for example, \"PU.245 (11).jpg\" or \"PU.245_11.jpg\" both resolve to 11)."));
     gtk_box_append(GTK_BOX(content), whats_new_heading("Fixes"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("The config directory is created on first launch; missing or empty settings files no longer trigger warnings."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed Excel header parsing where shared-string headers were not resolved, leaving geolocation and time data unmapped."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed a crash when closing the Preferences dialog."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed a crash on startup in the settings loader."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed settings and the selected preset being reset on startup."));
