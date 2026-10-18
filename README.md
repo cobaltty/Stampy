@@ -25,6 +25,7 @@ one by one.
   is the azimuth.
 - Geolocation: an `.xlsx` with columns A=id, B=longitude, C=latitude,
   D=azimuth.
+  - Improved, now with scanner to figure it out which colom has id, long, lat, and azimuth
 
 ## Install
 
