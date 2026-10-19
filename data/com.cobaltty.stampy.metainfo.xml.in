@@ -45,6 +45,11 @@
   </screenshots>
 
   <releases>
+    <release version="1.833.beta" date="2026-10-19">
+      <description>
+        <p>Bug fixes and improvements.</p>
+      </description>
+    </release>
     <release version="1.832.beta" date="2026-10-19">
       <description>
         <p>Import helpers, a landscape warning, automatic export folders, and live progress.</p>

@@ -690,6 +690,7 @@ static void on_whats_new_activated(GSimpleAction *action, GVariant *parameter, g
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Folder scans run in the background: the title bar shows \"Scanning…\" with a pulsing progress bar, and exports show live \"Exporting… N%\" progress."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("New Additional Settings category in Preferences, and 2x thread oversubscription keeps CPUs busy during storage I/O wait."));
     gtk_box_append(GTK_BOX(content), whats_new_heading("Fixes"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Bug fixes and improvements."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("The config directory is created on first launch; missing or empty settings files no longer trigger warnings."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed Excel header parsing where shared-string headers were not resolved, leaving geolocation and time data unmapped."));
     gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed a crash when closing the Preferences dialog."));
