@@ -15,13 +15,6 @@ config_h.set_quoted('LOCALEDIR', get_option('prefix') / get_option('localedir'))
 configure_file(output: 'config.h', configuration: config_h)
 add_project_arguments(['-I' + meson.project_build_root()], language: 'c')
 
-blueprints = custom_target('blueprints',
-  input: files('src/window.blp'),
-  output: 'window.ui',
-  command: [find_program('blueprint-compiler'), 'compile', '--output', '@OUTPUT@', '@INPUT@']
-)
-
-
 project_c_args = []
 test_c_args = [
   '-Wcast-align',
