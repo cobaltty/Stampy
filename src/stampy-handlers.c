@@ -262,8 +262,9 @@ static gboolean populate_chunk_cb(gpointer user_data) {
     return G_SOURCE_REMOVE;
 }
 
-/* Guarantees the list model has one entry per file, even if an import path
- * merged the same GFile twice (overlapping drops, stale scan, etc.). */
+/* Guarantees one list entry per output filename. Duplicate basenames (for
+ * example a photo and its previously exported copy) would overwrite each
+ * other on export, so only the first occurrence is kept. */
 static void dedupe_image_files(StampyWindow *self) {
     GHashTable *seen;
     GPtrArray *unique;
@@ -277,17 +278,22 @@ static void dedupe_image_files(StampyWindow *self) {
 
     for (i = 0; i < self->image_files->len; i++) {
         GFile *file = g_ptr_array_index(self->image_files, i);
-        char *path;
+        char *basename;
+        char *key = NULL;
         gboolean duplicate = FALSE;
 
         if (!file) continue;
 
-        path = g_file_get_path(file);
-        if (path) {
-            if (g_hash_table_contains(seen, path))
+        /* Key by basename: exports are written by basename into one folder,
+         * so two files with the same name always collide anyway. */
+        basename = g_file_get_basename(file);
+        if (basename) key = g_utf8_strdown(basename, -1);
+
+        if (key) {
+            if (g_hash_table_contains(seen, key))
                 duplicate = TRUE;
             else
-                g_hash_table_add(seen, g_strdup(path));
+                g_hash_table_add(seen, g_strdup(key));
         } else {
             for (j = 0; j < unique->len; j++) {
                 if (g_file_equal(g_ptr_array_index(unique, j), file)) {
@@ -302,7 +308,8 @@ static void dedupe_image_files(StampyWindow *self) {
         } else {
             g_ptr_array_add(unique, g_object_ref(file));
         }
-        g_free(path);
+        g_free(key);
+        g_free(basename);
     }
 
     g_hash_table_unref(seen);
@@ -318,7 +325,6 @@ static void dedupe_image_files(StampyWindow *self) {
 
 void stampy_populate_file_listbox(StampyWindow *self) {
     guint total, i;
-    GtkWidget *child;
 
     if (!self || !self->file_listbox) return;
 
@@ -347,13 +353,8 @@ void stampy_populate_file_listbox(StampyWindow *self) {
     g_free(self->preview_cached_path);
     self->preview_cached_path = NULL;
 
-    /* Remove existing rows. */
-    child = gtk_widget_get_first_child(GTK_WIDGET(self->file_listbox));
-    while (child != NULL) {
-        GtkWidget *next = gtk_widget_get_next_sibling(child);
-        gtk_list_box_remove(GTK_LIST_BOX(self->file_listbox), child);
-        child = next;
-    }
+    /* Remove existing rows in one supported pass. */
+    gtk_list_box_remove_all(GTK_LIST_BOX(self->file_listbox));
 
     if (!self->image_files || self->image_files->len == 0) {
         g_signal_handlers_unblock_matched(self->file_listbox, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, self);
@@ -497,6 +498,10 @@ static void on_remove_selected_activated(GSimpleAction *action, GVariant *parame
 
     g_array_free(indices, TRUE);
 
+    /* The loaded set no longer matches the cached folder tree. */
+    g_clear_pointer(&self->scan_cache_sources, g_ptr_array_unref);
+    g_clear_pointer(&self->scan_cache_dirs, g_hash_table_unref);
+
     stampy_populate_file_listbox(self);
 
     if (self->image_files && self->image_files->len > 0) {
@@ -545,6 +550,8 @@ static void on_clear_all_clicked(GtkButton *btn, gpointer user_data) {
 
     g_clear_object(&self->default_export_folder);
     g_clear_object(&self->import_root);
+    g_clear_pointer(&self->scan_cache_sources, g_ptr_array_unref);
+    g_clear_pointer(&self->scan_cache_dirs, g_hash_table_unref);
     if (self->btn_header_export)
         gtk_widget_set_tooltip_text(self->btn_header_export, "Export Final Output");
 

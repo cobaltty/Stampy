@@ -499,10 +499,15 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
     }
 }
 
+static gboolean file_key_equal(gconstpointer a, gconstpointer b) {
+    return g_file_equal((GFile *)a, (GFile *)b);
+}
+
 /* Folder scanning runs off the main thread so large drops never freeze the UI. */
 typedef struct {
     GPtrArray *sources;
     GPtrArray *images;
+    GHashTable *dir_times;
     guint generation;
 } ScanTaskData;
 
@@ -511,6 +516,7 @@ static void scan_task_data_free(gpointer data) {
     if (scan) {
         if (scan->sources) g_ptr_array_unref(scan->sources);
         if (scan->images) g_ptr_array_unref(scan->images);
+        if (scan->dir_times) g_hash_table_unref(scan->dir_times);
         g_free(scan);
     }
 }
@@ -529,28 +535,62 @@ static gboolean is_supported_image_name(const char *name) {
     return ok;
 }
 
-static void collect_images(GPtrArray *out, GFile *file, GCancellable *cancel) {
-    GFileType type;
+/* Directories created by Stampy's own export. Scanning them again feeds
+ * previously exported copies back into the list as duplicates. */
+static gboolean is_export_output_dir(const char *name) {
+    char *lower;
+    gboolean result;
 
+    if (!name) return FALSE;
+
+    lower = g_utf8_strdown(name, -1);
+    result = g_str_has_suffix(lower, "_stamped");
+    g_free(lower);
+    return result;
+}
+
+/* Reuses the type already delivered by the directory enumerator, so a rescan
+ * does one readdir per directory instead of one stat per file. Directory
+ * mtimes are recorded to cheaply detect later changes. */
+static void collect_images(GPtrArray *out, GFile *file, GFileType type,
+                           GHashTable *dir_times, GCancellable *cancel) {
     if (g_cancellable_is_cancelled(cancel)) return;
 
-    type = g_file_query_file_type(file, G_FILE_QUERY_INFO_NONE, NULL);
+    if (type == G_FILE_TYPE_UNKNOWN)
+        type = g_file_query_file_type(file, G_FILE_QUERY_INFO_NONE, NULL);
 
     if (type == G_FILE_TYPE_DIRECTORY) {
-        GFileEnumerator *e = g_file_enumerate_children(file,
-                                                       "standard::name,standard::type",
-                                                       G_FILE_QUERY_INFO_NONE,
-                                                       NULL, NULL);
+        GFileInfo *dir_info;
+        GFileEnumerator *e;
+
+        dir_info = g_file_query_info(file, G_FILE_ATTRIBUTE_TIME_MODIFIED,
+                                     G_FILE_QUERY_INFO_NONE, NULL, NULL);
+        if (dir_info) {
+            gint64 mtime = (gint64)g_file_info_get_attribute_uint64(
+                dir_info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
+            gint64 *stored = g_new(gint64, 1);
+
+            *stored = mtime;
+            g_hash_table_insert(dir_times, g_object_ref(file), stored);
+            g_object_unref(dir_info);
+        }
+
+        e = g_file_enumerate_children(file,
+                                      "standard::name,standard::type",
+                                      G_FILE_QUERY_INFO_NONE,
+                                      NULL, NULL);
         if (e) {
             GFileInfo *info;
 
             while (!g_cancellable_is_cancelled(cancel) &&
                    (info = g_file_enumerator_next_file(e, NULL, NULL)) != NULL) {
                 const char *name = g_file_info_get_name(info);
+                GFileType child_type = g_file_info_get_file_type(info);
 
-                if (name && *name != '.') {
+                if (name && *name != '.' &&
+                    !(child_type == G_FILE_TYPE_DIRECTORY && is_export_output_dir(name))) {
                     GFile *child = g_file_get_child(file, name);
-                    collect_images(out, child, cancel);
+                    collect_images(out, child, child_type, dir_times, cancel);
                     g_object_unref(child);
                 }
                 g_object_unref(info);
@@ -575,7 +615,10 @@ static void scan_thread(GTask *task, gpointer source, gpointer task_data, GCance
     (void)source;
 
     for (i = 0; i < scan->sources->len; i++) {
-        collect_images(scan->images, g_ptr_array_index(scan->sources, i), cancel);
+        GFile *src_file = g_ptr_array_index(scan->sources, i);
+        GFileType type = g_file_query_file_type(src_file, G_FILE_QUERY_INFO_NONE, NULL);
+
+        collect_images(scan->images, src_file, type, scan->dir_times, cancel);
         if (g_cancellable_is_cancelled(cancel)) break;
     }
 
@@ -666,6 +709,21 @@ static void scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
     g_hash_table_unref(known);
     g_ptr_array_unref(images);
 
+    /* Remember the directory tree so an unchanged re-drop can skip scanning. */
+    {
+        GPtrArray *cached_sources = g_ptr_array_new_with_free_func(g_object_unref);
+
+        for (i = 0; i < scan->sources->len; i++)
+            g_ptr_array_add(cached_sources, g_object_ref(g_ptr_array_index(scan->sources, i)));
+
+        if (self->scan_cache_sources) g_ptr_array_unref(self->scan_cache_sources);
+        self->scan_cache_sources = cached_sources;
+
+        if (self->scan_cache_dirs) g_hash_table_unref(self->scan_cache_dirs);
+        self->scan_cache_dirs = scan->dir_times;
+        scan->dir_times = NULL;
+    }
+
     if (added_count > 0) {
         GSList *sources = NULL;
 
@@ -688,6 +746,63 @@ static void scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
     g_clear_error(&error);
 }
 
+static gboolean scan_cache_sources_match(StampyWindow *self, GSList *files) {
+    GSList *l;
+    guint count = 0;
+    guint i;
+
+    if (!self->scan_cache_sources || !self->scan_cache_dirs) return FALSE;
+
+    for (l = files; l != NULL; l = l->next)
+        if (l->data) count++;
+
+    if (count != self->scan_cache_sources->len) return FALSE;
+
+    for (l = files; l != NULL; l = l->next) {
+        GFile *file = G_FILE(l->data);
+        gboolean found = FALSE;
+
+        if (!file) continue;
+        for (i = 0; i < self->scan_cache_sources->len; i++) {
+            if (g_file_equal(file, g_ptr_array_index(self->scan_cache_sources, i))) {
+                found = TRUE;
+                break;
+            }
+        }
+        if (!found) return FALSE;
+    }
+
+    return TRUE;
+}
+
+/* Every cached directory must still exist with the same mtime. A file add or
+ * remove updates its parent directory's mtime, so this detects real changes
+ * without walking the tree again. */
+static gboolean scan_cache_is_fresh(StampyWindow *self) {
+    GHashTableIter iter;
+    gpointer key, value;
+
+    if (!self->scan_cache_dirs) return FALSE;
+
+    g_hash_table_iter_init(&iter, self->scan_cache_dirs);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        GFile *dir = G_FILE(key);
+        gint64 expected = *(gint64 *)value;
+        GFileInfo *info = g_file_query_info(dir, G_FILE_ATTRIBUTE_TIME_MODIFIED,
+                                            G_FILE_QUERY_INFO_NONE, NULL, NULL);
+        gint64 actual;
+
+        if (!info) return FALSE;
+        actual = (gint64)g_file_info_get_attribute_uint64(
+            info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
+        g_object_unref(info);
+
+        if (actual != expected) return FALSE;
+    }
+
+    return TRUE;
+}
+
 /* Imports dropped image files and folders asynchronously. */
 static void stampy_add_image_files(StampyWindow *self, GSList *files) {
     ScanTaskData *scan;
@@ -696,6 +811,13 @@ static void stampy_add_image_files(StampyWindow *self, GSList *files) {
     GSList *l;
 
     if (!self || !files) return;
+
+    /* Same roots, same directory mtimes: nothing to scan or add. */
+    if (scan_cache_sources_match(self, files) && scan_cache_is_fresh(self)) {
+        stampy_show_toast(self, "Folder already imported");
+        stampy_append_log(self, "[INFO] Folder unchanged; skipped rescan.");
+        return;
+    }
 
     if (self->scan_cancel) {
         g_cancellable_cancel(self->scan_cancel);
@@ -706,6 +828,8 @@ static void stampy_add_image_files(StampyWindow *self, GSList *files) {
     scan = g_new0(ScanTaskData, 1);
     scan->sources = g_ptr_array_new_with_free_func(g_object_unref);
     scan->images = g_ptr_array_new_with_free_func(g_object_unref);
+    scan->dir_times = g_hash_table_new_full(g_file_hash, file_key_equal,
+                                            g_object_unref, g_free);
     scan->generation = self->scan_generation;
 
     for (l = files; l != NULL; l = l->next) {

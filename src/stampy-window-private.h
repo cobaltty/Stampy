@@ -110,6 +110,8 @@ struct _StampyWindow {
     gboolean export_active;
     GFile *default_export_folder;
     GFile *import_root;
+    GPtrArray *scan_cache_sources;
+    GHashTable *scan_cache_dirs;
     gboolean has_active_status_line;
 };
 

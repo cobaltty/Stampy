@@ -813,7 +813,6 @@ void stampy_on_landscape_banner_clicked(AdwBanner *banner, gpointer user_data) {
     AdwToolbarView *toolbar;
     AdwHeaderBar *header;
     GtkWidget *title_widget;
-    GtkWidget *close_btn;
     GtkWidget *content;
     GtkWidget *heading;
     GtkWidget *scrolled;
@@ -836,10 +835,6 @@ void stampy_on_landscape_banner_clicked(AdwBanner *banner, gpointer user_data) {
     gtk_widget_add_css_class(title_widget, "title");
     adw_header_bar_set_title_widget(header, title_widget);
 
-    close_btn = gtk_button_new_from_icon_name("window-close-symbolic");
-    gtk_widget_set_tooltip_text(close_btn, "Close");
-    g_signal_connect_swapped(close_btn, "clicked", G_CALLBACK(adw_dialog_close), dialog);
-    adw_header_bar_pack_end(header, close_btn);
     adw_toolbar_view_add_top_bar(toolbar, GTK_WIDGET(header));
 
     content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);

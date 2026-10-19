@@ -28,8 +28,12 @@ static void apply_custom_css(void) {
         "  border-radius: 2px;"
         "  transition: min-width 100ms cubic-bezier(0, 0, 0.2, 1);"
         "}"
-        "banner#banner_landscape > revealer > widget {"
+        "banner#stampy_banner_light > revealer > widget {"
         "  background-color: #f9f06b;"
+        "  color: #1a1a1a;"
+        "}"
+        "banner#stampy_banner_dark > revealer > widget {"
+        "  background-color: #e5a50a;"
         "  color: #1a1a1a;"
         "}";
 
@@ -149,6 +153,16 @@ static void stampy_window_dispose(GObject *object) {
     if (self->import_root) {
         g_object_unref(self->import_root);
         self->import_root = NULL;
+    }
+
+    if (self->scan_cache_sources) {
+        g_ptr_array_unref(self->scan_cache_sources);
+        self->scan_cache_sources = NULL;
+    }
+
+    if (self->scan_cache_dirs) {
+        g_hash_table_unref(self->scan_cache_dirs);
+        self->scan_cache_dirs = NULL;
     }
 
     G_OBJECT_CLASS(stampy_window_parent_class)->dispose(object);
@@ -333,6 +347,24 @@ void stampy_toggle_compass_lock(StampyWindow *self) {
                                  !gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_compass_lock)));
 }
 
+/* Yellow banner: brighter in light mode, deeper amber in dark mode. */
+static void update_banner_theme(StampyWindow *self) {
+    AdwStyleManager *manager = adw_style_manager_get_default();
+    gboolean dark;
+
+    if (!self || !self->banner_landscape || !manager) return;
+
+    dark = adw_style_manager_get_dark(manager);
+    gtk_widget_set_name(self->banner_landscape,
+                        dark ? "stampy_banner_dark" : "stampy_banner_light");
+}
+
+static void on_style_dark_changed(GObject *object, GParamSpec *pspec, gpointer user_data) {
+    (void)object;
+    (void)pspec;
+    update_banner_theme(STAMPY_WINDOW(user_data));
+}
+
 static void stampy_window_init(StampyWindow *self) {
     gtk_widget_init_template(GTK_WIDGET(self));
 
@@ -345,9 +377,10 @@ static void stampy_window_init(StampyWindow *self) {
 
     apply_custom_css();
 
-    /* GtkBuilder ids are not CSS names; set it so the yellow banner rule matches. */
-    if (self->banner_landscape)
-        gtk_widget_set_name(self->banner_landscape, "banner_landscape");
+    /* GtkBuilder ids are not CSS names; set a name the banner rules match. */
+    update_banner_theme(self);
+    g_signal_connect_object(adw_style_manager_get_default(), "notify::dark",
+                            G_CALLBACK(on_style_dark_changed), self, 0);
 
     self->image_files = g_ptr_array_new_with_free_func(g_object_unref);
     self->geo_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
