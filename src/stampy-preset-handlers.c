@@ -364,6 +364,24 @@ void stampy_save_last_state(StampyWindow *self) {
     }
 }
 
+static gboolean on_save_state_timeout(gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    if (self && STAMPY_IS_WINDOW(self)) {
+        self->save_state_timeout_id = 0;
+        stampy_save_last_state(self);
+    }
+    return G_SOURCE_REMOVE;
+}
+
+void stampy_schedule_save_last_state(StampyWindow *self) {
+    if (!self || self->loading_state) return;
+    if (self->save_state_timeout_id > 0) {
+        g_source_remove(self->save_state_timeout_id);
+        self->save_state_timeout_id = 0;
+    }
+    self->save_state_timeout_id = g_timeout_add(300, on_save_state_timeout, self);
+}
+
 /* Restores the compass folder and lock flag from the config store,
    so a locked compass survives app restarts. */
 static void restore_compass_from_config(StampyWindow *self) {

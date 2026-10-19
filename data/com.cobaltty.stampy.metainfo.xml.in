@@ -45,12 +45,29 @@
   </screenshots>
 
   <releases>
+    <release version="1.832.beta" date="2026-10-19">
+      <description>
+        <p>Import helpers, a landscape warning, automatic export folders, and live progress.</p>
+        <p>Changes:</p>
+        <ul>
+          <li>Dropping a folder auto-loads a .docx watermark and an .xlsx geolocation file found inside it</li>
+          <li>Warning banner for photos taken in landscape orientation with a "See more" file list; toggle in Additional Settings (on by default)</li>
+          <li>Automatic "&lt;folder&gt;_stamped" export folder created next to the imported images; toggle in Additional Settings (on by default)</li>
+          <li>Folder scans run in the background; the title bar shows "Scanning…" with a pulsing progress bar, and exports show live "Exporting… N%" progress</li>
+          <li>Export progress is live: the terminal updates a single line for every photo instead of every ten, and the progress bar animates smoothly</li>
+          <li>New Additional Settings category in Preferences</li>
+          <li>Faster previews and UI with a cached preview pixbuf, debounced state saves, and a cached compass image set</li>
+          <li>2x thread oversubscription keeps CPUs busy during storage I/O wait (optional)</li>
+          <li>Removed the "-@" hint from the Batch ExifTool preference title</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.720.beta" date="2026-10-18">
       <description>
         <p>Metadata engine options and EXIF date/time correctness.</p>
         <p>Changes:</p>
         <ul>
-          <li>New preference: choose the metadata engine — per-image ExifTool, single-call ExifTool, batched ExifTool (-@), or the native in-memory gexiv2 engine</li>
+          <li>New preference: choose the metadata engine — per-image ExifTool, single-call ExifTool, batched ExifTool, or the native in-memory gexiv2 engine</li>
           <li>DOCX dates are combined with the XLSX time column into a full EXIF date/time; dates without a time default to 00:00:00 so tags stay valid</li>
           <li>IPTC DateCreated written as YYYY-MM-DD; GPS date/time written in the correct formats</li>
           <li>Faster filename-to-row matching: IDs are extracted from filenames with plot prefixes (for example, "PU.245 (11).jpg" or "PU.245_11.jpg" both resolve to 11)</li>

@@ -499,30 +499,238 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
     }
 }
 
-/* Imports dropped image files and folders. */
-static void stampy_add_image_files(StampyWindow *self, GSList *files) {
-    GSList *l;
+/* Folder scanning runs off the main thread so large drops never freeze the UI. */
+typedef struct {
+    GPtrArray *sources;
+    GPtrArray *images;
+    guint generation;
+} ScanTaskData;
+
+static void scan_task_data_free(gpointer data) {
+    ScanTaskData *scan = data;
+    if (scan) {
+        if (scan->sources) g_ptr_array_unref(scan->sources);
+        if (scan->images) g_ptr_array_unref(scan->images);
+        g_free(scan);
+    }
+}
+
+static gboolean is_supported_image_name(const char *name) {
+    char *lower;
+    gboolean ok;
+
+    if (!name) return FALSE;
+
+    lower = g_utf8_strdown(name, -1);
+    ok = g_str_has_suffix(lower, ".jpg") ||
+         g_str_has_suffix(lower, ".jpeg") ||
+         g_str_has_suffix(lower, ".png");
+    g_free(lower);
+    return ok;
+}
+
+static void collect_images(GPtrArray *out, GFile *file, GCancellable *cancel) {
+    GFileType type;
+
+    if (g_cancellable_is_cancelled(cancel)) return;
+
+    type = g_file_query_file_type(file, G_FILE_QUERY_INFO_NONE, NULL);
+
+    if (type == G_FILE_TYPE_DIRECTORY) {
+        GFileEnumerator *e = g_file_enumerate_children(file,
+                                                       "standard::name,standard::type",
+                                                       G_FILE_QUERY_INFO_NONE,
+                                                       NULL, NULL);
+        if (e) {
+            GFileInfo *info;
+
+            while (!g_cancellable_is_cancelled(cancel) &&
+                   (info = g_file_enumerator_next_file(e, NULL, NULL)) != NULL) {
+                const char *name = g_file_info_get_name(info);
+
+                if (name && *name != '.') {
+                    GFile *child = g_file_get_child(file, name);
+                    collect_images(out, child, cancel);
+                    g_object_unref(child);
+                }
+                g_object_unref(info);
+            }
+            g_file_enumerator_close(e, NULL, NULL);
+            g_object_unref(e);
+        }
+    } else {
+        char *basename = g_file_get_basename(file);
+
+        if (is_supported_image_name(basename))
+            g_ptr_array_add(out, g_object_ref(file));
+        g_free(basename);
+    }
+}
+
+static void scan_thread(GTask *task, gpointer source, gpointer task_data, GCancellable *cancel) {
+    ScanTaskData *scan = task_data;
+    GPtrArray *images;
+    guint i;
+
+    (void)source;
+
+    for (i = 0; i < scan->sources->len; i++) {
+        collect_images(scan->images, g_ptr_array_index(scan->sources, i), cancel);
+        if (g_cancellable_is_cancelled(cancel)) break;
+    }
+
+    if (g_cancellable_is_cancelled(cancel)) {
+        g_task_return_error_if_cancelled(task);
+        return;
+    }
+
+    images = scan->images;
+    scan->images = NULL;
+    g_task_return_pointer(task, images, (GDestroyNotify)g_ptr_array_unref);
+}
+
+static gboolean scan_pulse_cb(gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+
+    if (self && self->progress_bar)
+        gtk_progress_bar_pulse(GTK_PROGRESS_BAR(self->progress_bar));
+    return G_SOURCE_CONTINUE;
+}
+
+static void stop_scan_ui(StampyWindow *self) {
+    if (self->scan_pulse_id > 0) {
+        g_source_remove(self->scan_pulse_id);
+        self->scan_pulse_id = 0;
+    }
+    if (!self->export_active) {
+        if (self->progress_bar) gtk_widget_set_visible(self->progress_bar, FALSE);
+        gtk_window_set_title(GTK_WINDOW(self), "Stampy");
+    }
+}
+
+static void scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    GTask *task = G_TASK(res);
+    ScanTaskData *scan = g_task_get_task_data(task);
+    GError *error = NULL;
+    GPtrArray *images = g_task_propagate_pointer(task, &error);
+    GHashTable *known;
+    guint i;
     int added_count = 0;
 
-    if (!self || !files) return;
+    if (!self) {
+        if (images) g_ptr_array_unref(images);
+        g_clear_error(&error);
+        return;
+    }
+
+    /* Ignore results from a scan that has already been superseded. */
+    if (!scan || scan->generation != self->scan_generation) {
+        if (images) g_ptr_array_unref(images);
+        g_clear_error(&error);
+        return;
+    }
+
+    g_clear_object(&self->scan_cancel);
+    stop_scan_ui(self);
+
+    if (!images) {
+        stampy_append_log(self, "[WARN] Folder scan cancelled or failed.");
+        g_clear_error(&error);
+        return;
+    }
 
     if (!self->image_files) {
         self->image_files = g_ptr_array_new_with_free_func(g_object_unref);
     }
 
-    for (l = files; l != NULL; l = l->next) {
-        if (l->data) {
-            stampy_add_file_or_directory(self, G_FILE(l->data), &added_count);
-        }
+    known = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    for (i = 0; i < self->image_files->len; i++) {
+        char *path = g_file_get_path(g_ptr_array_index(self->image_files, i));
+        if (path) g_hash_table_add(known, path);
     }
 
+    for (i = 0; i < images->len; i++) {
+        GFile *file = g_ptr_array_index(images, i);
+        char *path = g_file_get_path(file);
+        gboolean exists = path && g_hash_table_contains(known, path);
+
+        if (!exists) {
+            if (path) g_hash_table_add(known, g_strdup(path));
+            g_ptr_array_add(self->image_files, g_object_ref(file));
+            added_count++;
+        }
+        g_free(path);
+    }
+
+    g_hash_table_unref(known);
+    g_ptr_array_unref(images);
+
     if (added_count > 0) {
+        GSList *sources = NULL;
+
+        for (i = 0; i < scan->sources->len; i++)
+            sources = g_slist_prepend(sources, g_object_ref(g_ptr_array_index(scan->sources, i)));
+
+        stampy_auto_detect_companion_files(self, sources);
+        g_slist_free_full(sources, g_object_unref);
+
+        if (scan->sources->len > 0)
+            stampy_set_import_root(self, g_ptr_array_index(scan->sources, 0));
+        stampy_prepare_default_export_folder(self);
         stampy_populate_file_listbox(self);
         stampy_append_log(self, "[INFO] Images imported successfully.");
         stampy_show_toast(self, "Images added!");
         stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
     }
+
+    g_clear_error(&error);
+}
+
+/* Imports dropped image files and folders asynchronously. */
+static void stampy_add_image_files(StampyWindow *self, GSList *files) {
+    ScanTaskData *scan;
+    GTask *task;
+    GCancellable *cancellable;
+    GSList *l;
+
+    if (!self || !files) return;
+
+    if (self->scan_cancel) {
+        g_cancellable_cancel(self->scan_cancel);
+        g_clear_object(&self->scan_cancel);
+    }
+    self->scan_generation++;
+
+    scan = g_new0(ScanTaskData, 1);
+    scan->sources = g_ptr_array_new_with_free_func(g_object_unref);
+    scan->images = g_ptr_array_new_with_free_func(g_object_unref);
+    scan->generation = self->scan_generation;
+
+    for (l = files; l != NULL; l = l->next) {
+        if (l->data) g_ptr_array_add(scan->sources, g_object_ref(l->data));
+    }
+
+    cancellable = g_cancellable_new();
+    task = g_task_new(self, cancellable, scan_done, self);
+    g_task_set_task_data(task, scan, scan_task_data_free);
+    g_task_run_in_thread(task, scan_thread);
+    g_object_unref(task);
+    self->scan_cancel = cancellable;
+
+    if (self->progress_bar) {
+        gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(self->progress_bar), 0.0);
+        gtk_progress_bar_set_pulse_step(GTK_PROGRESS_BAR(self->progress_bar), 0.05);
+        gtk_progress_bar_pulse(GTK_PROGRESS_BAR(self->progress_bar));
+        gtk_widget_set_visible(self->progress_bar, TRUE);
+    }
+    gtk_window_set_title(GTK_WINDOW(self), "Scanning…");
+
+    if (self->scan_pulse_id > 0) g_source_remove(self->scan_pulse_id);
+    self->scan_pulse_id = g_timeout_add(100, scan_pulse_cb, self);
+
+    stampy_append_log(self, "[INFO] Scanning folder for images…");
 }
 
 /* Drag-and-drop handlers. */
@@ -840,6 +1048,11 @@ void stampy_setup_file_handlers_and_dnd(StampyWindow *self) {
     GtkDropTarget *target_json;
 
     if (!self) return;
+
+    if (self->banner_landscape) {
+        g_signal_connect(self->banner_landscape, "button-clicked",
+                         G_CALLBACK(stampy_on_landscape_banner_clicked), self);
+    }
 
     if (self->file_listbox) {
         target_listbox = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);

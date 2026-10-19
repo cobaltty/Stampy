@@ -19,22 +19,18 @@ void stampy_set_progress(StampyWindow *self, double fraction, gboolean visible) 
 static void apply_custom_css(void) {
     GtkCssProvider *provider = gtk_css_provider_new();
     const char *css =
-        ".custom-rounded-list {"
-        "  border-radius: 12px;"
+        "progressbar > trough {"
+        "  min-height: 4px;"
         "}"
-        ".custom-rounded-list list,"
-        ".custom-rounded-list row:not(:selected) {"
-        "  background-color: transparent;"
+        "progressbar > trough > progress {"
+        "  min-height: 4px;"
+        "  background-color: @accent_color;"
+        "  border-radius: 2px;"
+        "  transition: min-width 100ms cubic-bezier(0, 0, 0.2, 1);"
         "}"
-        ".custom-rounded-list row:first-child,"
-        ".custom-rounded-list row:first-child:selected {"
-        "  border-top-left-radius: 12px;"
-        "  border-top-right-radius: 12px;"
-        "}"
-        ".custom-rounded-list row:last-child,"
-        ".custom-rounded-list row:last-child:selected {"
-        "  border-bottom-left-radius: 12px;"
-        "  border-bottom-right-radius: 12px;"
+        "banner#banner_landscape > revealer > widget {"
+        "  background-color: #f9f06b;"
+        "  color: #1a1a1a;"
         "}";
 
     gtk_css_provider_load_from_string(provider, css);
@@ -50,6 +46,26 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(window);
     (void)user_data;
 
+    if (self->landscape_cancel) {
+        g_cancellable_cancel(self->landscape_cancel);
+        g_clear_object(&self->landscape_cancel);
+    }
+
+    if (self->scan_cancel) {
+        g_cancellable_cancel(self->scan_cancel);
+        g_clear_object(&self->scan_cancel);
+    }
+
+    if (self->scan_pulse_id > 0) {
+        g_source_remove(self->scan_pulse_id);
+        self->scan_pulse_id = 0;
+    }
+
+    if (self->populate_source_id > 0) {
+        g_source_remove(self->populate_source_id);
+        self->populate_source_id = 0;
+    }
+
     stampy_save_last_state(self);
     return FALSE;
 }
@@ -58,6 +74,21 @@ G_DEFINE_TYPE(StampyWindow, stampy_window, ADW_TYPE_APPLICATION_WINDOW)
 
 static void stampy_window_dispose(GObject *object) {
     StampyWindow *self = STAMPY_WINDOW(object);
+
+    if (self->scan_cancel) {
+        g_cancellable_cancel(self->scan_cancel);
+        g_clear_object(&self->scan_cancel);
+    }
+
+    if (self->scan_pulse_id > 0) {
+        g_source_remove(self->scan_pulse_id);
+        self->scan_pulse_id = 0;
+    }
+
+    if (self->populate_source_id > 0) {
+        g_source_remove(self->populate_source_id);
+        self->populate_source_id = 0;
+    }
 
     if (self->geo_table) {
         g_hash_table_destroy(self->geo_table);
@@ -84,6 +115,42 @@ static void stampy_window_dispose(GObject *object) {
         self->file_geolocation = NULL;
     }
 
+    if (self->save_state_timeout_id > 0) {
+        g_source_remove(self->save_state_timeout_id);
+        self->save_state_timeout_id = 0;
+        stampy_save_last_state(self);
+    }
+
+    if (self->preview_cached_pixbuf) {
+        g_object_unref(self->preview_cached_pixbuf);
+        self->preview_cached_pixbuf = NULL;
+    }
+
+    if (self->preview_cached_path) {
+        g_free(self->preview_cached_path);
+        self->preview_cached_path = NULL;
+    }
+
+    if (self->landscape_cancel) {
+        g_cancellable_cancel(self->landscape_cancel);
+        g_clear_object(&self->landscape_cancel);
+    }
+
+    if (self->horizontal_photos) {
+        g_ptr_array_unref(self->horizontal_photos);
+        self->horizontal_photos = NULL;
+    }
+
+    if (self->default_export_folder) {
+        g_object_unref(self->default_export_folder);
+        self->default_export_folder = NULL;
+    }
+
+    if (self->import_root) {
+        g_object_unref(self->import_root);
+        self->import_root = NULL;
+    }
+
     G_OBJECT_CLASS(stampy_window_parent_class)->dispose(object);
 }
 
@@ -97,6 +164,7 @@ static void stampy_window_class_init(StampyWindowClass *klass) {
 
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, toast_overlay);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, progress_bar);
+    gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_landscape);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, left_stack);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, drop_area_frame);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, file_listbox);
@@ -276,6 +344,10 @@ static void stampy_window_init(StampyWindow *self) {
     self->loading_state = TRUE;
 
     apply_custom_css();
+
+    /* GtkBuilder ids are not CSS names; set it so the yellow banner rule matches. */
+    if (self->banner_landscape)
+        gtk_widget_set_name(self->banner_landscape, "banner_landscape");
 
     self->image_files = g_ptr_array_new_with_free_func(g_object_unref);
     self->geo_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);

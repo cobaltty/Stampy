@@ -252,6 +252,43 @@ on_batch_exiftool_changed (GObject *object, GParamSpec *pspec, gpointer user_dat
   stampy_config_set_bool (STAMPY_CONFIG_KEY_BATCH_EXIFTOOL, active);
 }
 
+static void
+on_oversubscribe_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  gboolean active;
+  (void) pspec;
+  (void) user_data;
+
+  active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
+  stampy_config_set_bool (STAMPY_CONFIG_KEY_EXPORT_OVERSUBSCRIBE, active);
+}
+
+static void
+on_warn_landscape_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  gboolean active;
+  StampyWindow *self = STAMPY_WINDOW (user_data);
+
+  (void) pspec;
+  active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
+  stampy_config_set_bool (STAMPY_CONFIG_KEY_WARN_LANDSCAPE, active);
+  if (self != NULL)
+    stampy_check_horizontal_photos (self);
+}
+
+static void
+on_auto_folder_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  gboolean active;
+  StampyWindow *self = STAMPY_WINDOW (user_data);
+
+  (void) pspec;
+  active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
+  stampy_config_set_bool (STAMPY_CONFIG_KEY_AUTO_STAMPED_FOLDER, active);
+  if (self != NULL)
+    stampy_prepare_default_export_folder (self);
+}
+
 void
 stampy_show_preferences (StampyWindow *self)
 {
@@ -260,11 +297,15 @@ stampy_show_preferences (StampyWindow *self)
   AdwPreferencesGroup *comp_group;
   AdwPreferencesGroup *perf_group;
   AdwPreferencesGroup *exp_group;
+  AdwPreferencesGroup *extra_group;
   AdwSwitchRow *cores_switch;
+  AdwSwitchRow *oversubscribe_switch;
   AdwSwitchRow *native_meta_switch;
   AdwSwitchRow *batch_exiftool_switch;
   AdwSwitchRow *title_exp_toggle;
   AdwSwitchRow *xlsx_time_toggle;
+  AdwSwitchRow *landscape_switch;
+  AdwSwitchRow *auto_folder_switch;
   GtkWidget *threads_row;
   gboolean use_all;
   gboolean use_native;
@@ -282,12 +323,12 @@ stampy_show_preferences (StampyWindow *self)
 
   dialog = ADW_DIALOG (adw_preferences_dialog_new ());
   adw_dialog_set_title (dialog, "Preferences");
-  adw_dialog_set_content_width (dialog, 480);
-  adw_dialog_set_content_height (dialog, 420);
+  adw_dialog_set_content_width (dialog, 540);
+  adw_dialog_set_content_height (dialog, 600);
 
   page = ADW_PREFERENCES_PAGE (adw_preferences_page_new ());
-  adw_preferences_page_set_title (page, "Export");
-  adw_preferences_page_set_icon_name (page, "export-symbolic");
+  adw_preferences_page_set_title (page, "General");
+  adw_preferences_page_set_icon_name (page, "preferences-system-symbolic");
   adw_preferences_dialog_add (ADW_PREFERENCES_DIALOG (dialog), page);
 
   comp_group = ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
@@ -328,7 +369,7 @@ stampy_show_preferences (StampyWindow *self)
                                     "Number of images processed at the same time. "
                                     "Fewer threads leave headroom for other apps.",
                                     2,
-                                    1, n_cpus,
+                                    1, n_cpus * 2,
                                     "worker threads", NULL,
                                     get_thread_count_value, set_thread_count_value);
   gtk_widget_set_sensitive (threads_row, !use_all);
@@ -336,6 +377,17 @@ stampy_show_preferences (StampyWindow *self)
   g_signal_connect (cores_switch, "notify::active",
                     G_CALLBACK (on_use_all_cores_changed),
                     threads_row);
+
+  oversubscribe_switch = ADW_SWITCH_ROW (adw_switch_row_new ());
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (oversubscribe_switch), "Thread oversubscription (2x cores)");
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (oversubscribe_switch),
+                               "Runs 2 worker threads per core to keep CPU busy during storage I/O wait.");
+  adw_switch_row_set_active (oversubscribe_switch,
+      stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_OVERSUBSCRIBE, TRUE));
+  g_object_bind_property (cores_switch, "active", oversubscribe_switch, "sensitive", G_BINDING_SYNC_CREATE);
+  g_signal_connect (oversubscribe_switch, "notify::active",
+                    G_CALLBACK (on_oversubscribe_changed), NULL);
+  adw_preferences_group_add (perf_group, GTK_WIDGET (oversubscribe_switch));
 
   native_meta_switch = ADW_SWITCH_ROW (adw_switch_row_new ());
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (native_meta_switch), "Native metadata engine (gexiv2)");
@@ -345,7 +397,7 @@ stampy_show_preferences (StampyWindow *self)
   adw_preferences_group_add (perf_group, GTK_WIDGET (native_meta_switch));
 
   batch_exiftool_switch = ADW_SWITCH_ROW (adw_switch_row_new ());
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (batch_exiftool_switch), "Batch ExifTool execution (-@)");
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (batch_exiftool_switch), "Batch ExifTool execution");
   adw_action_row_set_subtitle (ADW_ACTION_ROW (batch_exiftool_switch),
                                "Execute ExifTool once for the entire batch. Much faster for 1000+ photos.");
   adw_switch_row_set_active (batch_exiftool_switch,
@@ -375,6 +427,38 @@ stampy_show_preferences (StampyWindow *self)
   gtk_widget_set_tooltip_text (GTK_WIDGET (title_exp_toggle),
       "When enabled, DOCX watermark text will be injected as image title/description metadata. "
       "This is an experimental feature.");
+
+  /* Additional settings */
+  extra_group = ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
+  adw_preferences_group_set_title (extra_group, "Additional Settings");
+  adw_preferences_group_set_description (extra_group,
+      "Optional import and export helpers.");
+  adw_preferences_page_add (page, extra_group);
+
+  /* Horizontal (landscape) photo warning banner */
+  landscape_switch = ADW_SWITCH_ROW (adw_switch_row_new ());
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (landscape_switch),
+      "Warn about horizontal photos");
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (landscape_switch),
+      "Show a banner listing photos taken in landscape orientation.");
+  adw_switch_row_set_active (landscape_switch,
+      stampy_config_get_bool (STAMPY_CONFIG_KEY_WARN_LANDSCAPE, TRUE));
+  g_signal_connect (landscape_switch, "notify::active",
+                    G_CALLBACK (on_warn_landscape_changed), self);
+  adw_preferences_group_add (extra_group, GTK_WIDGET (landscape_switch));
+
+  /* Automatic "<folder>_stamped" export destination */
+  auto_folder_switch = ADW_SWITCH_ROW (adw_switch_row_new ());
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (auto_folder_switch),
+      "Auto \"_stamped\" export folder");
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (auto_folder_switch),
+      "Creates a sibling folder named after the current image folder plus \"_stamped\" "
+      "and exports into it automatically. Turn off to choose a destination folder on every export.");
+  adw_switch_row_set_active (auto_folder_switch,
+      stampy_config_get_bool (STAMPY_CONFIG_KEY_AUTO_STAMPED_FOLDER, TRUE));
+  g_signal_connect (auto_folder_switch, "notify::active",
+                    G_CALLBACK (on_auto_folder_changed), self);
+  adw_preferences_group_add (extra_group, GTK_WIDGET (auto_folder_switch));
 
   /* XLSX clock injection toggle */
   xlsx_time_toggle = ADW_SWITCH_ROW (adw_switch_row_new ());

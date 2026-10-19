@@ -91,6 +91,26 @@ struct _StampyWindow {
     GtkWidget *img_decoration;
     gint export_cancel_flag;
     gboolean loading_state;
+
+    /* Live preview cache & debounce */
+    char *preview_cached_path;
+    GdkPixbuf *preview_cached_pixbuf;
+    guint save_state_timeout_id;
+
+    /* QoL features */
+    GtkWidget *banner_landscape;
+    GPtrArray *horizontal_photos;
+    GCancellable *landscape_cancel;
+    guint landscape_generation;
+    GCancellable *scan_cancel;
+    guint scan_pulse_id;
+    guint scan_generation;
+    guint populate_source_id;
+    guint populate_generation;
+    gboolean export_active;
+    GFile *default_export_folder;
+    GFile *import_root;
+    gboolean has_active_status_line;
 };
 
 /* Window setup. */
@@ -116,6 +136,13 @@ void stampy_populate_system_fonts(StampyWindow *self);
 void stampy_populate_file_listbox(StampyWindow *self);
 void stampy_add_file_or_directory(StampyWindow *self, GFile *file, int *added_count);
 void stampy_append_log(StampyWindow *self, const char *message);
+void stampy_update_status_line(StampyWindow *self, const char *message);
+void stampy_check_horizontal_photos(StampyWindow *self);
+void stampy_auto_detect_companion_files(StampyWindow *self, GSList *files);
+void stampy_prepare_default_export_folder(StampyWindow *self);
+void stampy_set_import_root(StampyWindow *self, GFile *file);
+void stampy_on_landscape_banner_clicked(AdwBanner *banner, gpointer user_data);
+void parse_excel_file(StampyWindow *self, GFile *file);
 void stampy_open_image_picker(StampyWindow *self);
 
 
@@ -124,6 +151,7 @@ void stampy_scan_and_populate_presets(StampyWindow *self);
 void stampy_save_preset_to_file(StampyWindow *self, const char *filepath);
 void stampy_load_preset_from_file(StampyWindow *self, const char *filepath);
 void stampy_save_last_state(StampyWindow *self);
+void stampy_schedule_save_last_state(StampyWindow *self);
 void stampy_load_last_state(StampyWindow *self);
 void stampy_set_progress(StampyWindow *self, double fraction, gboolean visible);
 
@@ -151,6 +179,9 @@ void on_xlsx_time_exif_toggled(GObject *object, GParamSpec *pspec, gpointer user
 #define STAMPY_CONFIG_KEY_XLSX_TIME_EXIF "xlsx-time-exif" /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_USE_NATIVE_METADATA "use-native-metadata" /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_BATCH_EXIFTOOL "batch-exiftool" /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_EXPORT_OVERSUBSCRIBE "export-oversubscribe" /* bool, default TRUE */
+#define STAMPY_CONFIG_KEY_WARN_LANDSCAPE "warn-landscape" /* bool, default TRUE */
+#define STAMPY_CONFIG_KEY_AUTO_STAMPED_FOLDER "auto-stamped-folder" /* bool, default TRUE */
 /* New preferences only need a key here plus the get/set helpers below. */
 int stampy_config_get_int(const char *key, int fallback);
 void stampy_config_set_int(const char *key, int value);

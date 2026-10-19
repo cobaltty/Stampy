@@ -284,13 +284,17 @@ stampy_config_get_export_threads (void)
   int stored;
 
   if (stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_USE_ALL_CORES, TRUE))
-    return n_cpus;
+    {
+      if (stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_OVERSUBSCRIBE, TRUE))
+        return n_cpus * 2;
+      return n_cpus;
+    }
 
   stored = stampy_config_get_int (STAMPY_CONFIG_KEY_EXPORT_THREAD_COUNT, 0);
   if (stored < 1)
     return 1;
-  if (stored > n_cpus)
-    return n_cpus;
+  if (stored > n_cpus * 2)
+    return n_cpus * 2;
   return stored;
 }
 
@@ -301,8 +305,8 @@ stampy_config_set_export_threads (int value)
 
   if (value < 1)
     value = 1;
-  if (value > n_cpus)
-    value = n_cpus;
+  if (value > n_cpus * 2)
+    value = n_cpus * 2;
 
   stampy_config_set_int (STAMPY_CONFIG_KEY_EXPORT_THREAD_COUNT, value);
 }

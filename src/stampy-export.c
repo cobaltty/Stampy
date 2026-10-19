@@ -67,6 +67,7 @@ typedef struct {
     FILE *argfile_fp;
     GMutex argfile_mutex;
     char *argfile_path;
+    gpointer compass_idx;
 } ExportWorkerContext;
 
 /* One image to export. */
@@ -130,6 +131,125 @@ static char *clean_compass_string(const char *str) {
         }
     }
     return g_string_free(out, FALSE);
+}
+
+typedef struct {
+    char *degree_path[360];
+    GdkPixbuf *degree_pb[360];
+    int degree_pb_w[360];
+    char *default_path;
+    GdkPixbuf *default_pb;
+    int default_pb_w;
+    GMutex mutex;
+} CompassIndex;
+
+static CompassIndex *compass_index_new(const char *compass_dir) {
+    CompassIndex *idx;
+    GDir *dir;
+    const char *filename;
+    char *default_p;
+
+    if (!compass_dir || !g_file_test(compass_dir, G_FILE_TEST_IS_DIR)) return NULL;
+
+    idx = g_new0(CompassIndex, 1);
+    g_mutex_init(&idx->mutex);
+    dir = g_dir_open(compass_dir, 0, NULL);
+    if (dir) {
+        while ((filename = g_dir_read_name(dir)) != NULL) {
+            char *clean_fn = clean_compass_string(filename);
+            char *lower_fn = g_ascii_strdown(clean_fn, -1);
+
+            if (g_str_has_suffix(lower_fn, ".png") || g_str_has_suffix(lower_fn, ".jpg") || g_str_has_suffix(lower_fn, ".jpeg")) {
+                int extracted = extract_id_from_filename(filename);
+                if (extracted >= 0) {
+                    int file_deg = (extracted % 360 + 360) % 360;
+                    if (!idx->degree_path[file_deg]) {
+                        idx->degree_path[file_deg] = g_build_filename(compass_dir, filename, NULL);
+                    }
+                }
+            }
+            g_free(clean_fn);
+            g_free(lower_fn);
+        }
+        g_dir_close(dir);
+    }
+
+    default_p = g_build_filename(compass_dir, "compass.png", NULL);
+    if (g_file_test(default_p, G_FILE_TEST_EXISTS)) {
+        idx->default_path = default_p;
+    } else {
+        g_free(default_p);
+    }
+
+    return idx;
+}
+
+static void compass_index_free(CompassIndex *idx) {
+    int i;
+    if (!idx) return;
+    for (i = 0; i < 360; i++) {
+        g_free(idx->degree_path[i]);
+        if (idx->degree_pb[i]) g_object_unref(idx->degree_pb[i]);
+    }
+    g_free(idx->default_path);
+    if (idx->default_pb) g_object_unref(idx->default_pb);
+    g_mutex_clear(&idx->mutex);
+    g_free(idx);
+}
+
+static GdkPixbuf *compass_index_load_pixbuf(CompassIndex *idx, const char *azimuth_str, int req_w) {
+    int target_deg = 0;
+    const char *best_path = NULL;
+    int best_deg = -1;
+    int offset;
+    GdkPixbuf *res = NULL;
+
+    if (!idx) return NULL;
+
+    if (azimuth_str && *azimuth_str != '\0') {
+        if (sscanf(azimuth_str, "%d", &target_deg) == 1) {
+            target_deg = (target_deg % 360 + 360) % 360;
+        }
+    }
+
+    for (offset = 0; offset <= 180; offset++) {
+        int d1 = (target_deg + offset) % 360;
+        int d2 = (target_deg - offset + 360) % 360;
+        if (idx->degree_path[d1]) {
+            best_path = idx->degree_path[d1];
+            best_deg = d1;
+            break;
+        }
+        if (idx->degree_path[d2]) {
+            best_path = idx->degree_path[d2];
+            best_deg = d2;
+            break;
+        }
+    }
+
+    g_mutex_lock(&idx->mutex);
+    if (best_deg >= 0) {
+        if (idx->degree_pb[best_deg] && idx->degree_pb_w[best_deg] == req_w) {
+            res = g_object_ref(idx->degree_pb[best_deg]);
+        } else if (best_path && g_file_test(best_path, G_FILE_TEST_EXISTS)) {
+            if (idx->degree_pb[best_deg]) g_object_unref(idx->degree_pb[best_deg]);
+            idx->degree_pb[best_deg] = gdk_pixbuf_new_from_file_at_scale(best_path, req_w, -1, TRUE, NULL);
+            idx->degree_pb_w[best_deg] = req_w;
+            if (idx->degree_pb[best_deg]) res = g_object_ref(idx->degree_pb[best_deg]);
+        }
+    } else if (idx->default_path && g_file_test(idx->default_path, G_FILE_TEST_EXISTS)) {
+        if (idx->default_pb && idx->default_pb_w == req_w) {
+            res = g_object_ref(idx->default_pb);
+        } else {
+            if (idx->default_pb) g_object_unref(idx->default_pb);
+            idx->default_pb = gdk_pixbuf_new_from_file_at_scale(idx->default_path, req_w, -1, TRUE, NULL);
+            idx->default_pb_w = req_w;
+            if (idx->default_pb) res = g_object_ref(idx->default_pb);
+        }
+    }
+    g_mutex_unlock(&idx->mutex);
+
+    return res;
 }
 
 static GdkPixbuf *load_best_compass_pixbuf(const char *compass_dir, const char *azimuth_str, int req_w) {
@@ -286,45 +406,19 @@ static void free_export_snapshot(ExportSettingsSnapshot *snap) {
     if (snap->font_family) g_free(snap->font_family);
 }
 
-static GdkPixbuf *render_stamped_pixbuf_from_snapshot(GFile *image_file, const ExportSettingsSnapshot *snap, const char *in_custom_text, const char *in_azimuth_str) {
-    char *path;
-    GdkPixbuf *raw_pixbuf;
-    GdkPixbuf *pixbuf = NULL;
+static GdkPixbuf *render_stamped_on_pixbuf(GdkPixbuf *pixbuf, const ExportSettingsSnapshot *snap, const char *in_custom_text, const char *in_azimuth_str, CompassIndex *cidx) {
     cairo_surface_t *surface;
     cairo_t *cr;
     int width, height;
     double scale;
-    char *orig_basename;
     char *custom_text;
     char *azimuth_str;
+    GdkPixbuf *res_pixbuf;
+
+    if (!pixbuf) return NULL;
 
     custom_text = (in_custom_text && *in_custom_text) ? g_strdup(in_custom_text) : NULL;
     azimuth_str = (in_azimuth_str && *in_azimuth_str) ? g_strdup(in_azimuth_str) : NULL;
-
-    if (!image_file) {
-        g_free(custom_text);
-        g_free(azimuth_str);
-        return NULL;
-    }
-
-    path = g_file_get_path(image_file);
-    if (!path) {
-        g_free(custom_text);
-        g_free(azimuth_str);
-        return NULL;
-    }
-
-    raw_pixbuf = gdk_pixbuf_new_from_file(path, NULL);
-    if (!raw_pixbuf) {
-        g_free(path);
-        g_free(custom_text);
-        g_free(azimuth_str);
-        return NULL;
-    }
-
-    pixbuf = gdk_pixbuf_apply_embedded_orientation(raw_pixbuf);
-    g_object_unref(raw_pixbuf);
-    if (!pixbuf) pixbuf = raw_pixbuf;
 
     width = gdk_pixbuf_get_width(pixbuf);
     height = gdk_pixbuf_get_height(pixbuf);
@@ -335,17 +429,11 @@ static GdkPixbuf *render_stamped_pixbuf_from_snapshot(GFile *image_file, const E
     surface = cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, height);
     cr = cairo_create(surface);
 
-    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-    cairo_paint(cr);
-
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     gdk_cairo_set_source_pixbuf(cr, pixbuf, 0, 0);
 #pragma GCC diagnostic pop
     cairo_paint(cr);
-    g_object_unref(pixbuf);
-
-    orig_basename = g_file_get_basename(image_file);
 
     /* Compass overlay. */
     if (snap->has_compass && snap->file_compass) {
@@ -355,12 +443,17 @@ static GdkPixbuf *render_stamped_pixbuf_from_snapshot(GFile *image_file, const E
         int margin_y = (int)(snap->comp_margin_y * scale);
         guint pos_idx = snap->comp_pos_idx;
 
-        char *compass_dir = g_file_get_path(snap->file_compass);
+        char *compass_dir = NULL;
         GdkPixbuf *comp_pb = NULL;
 
-        if (compass_dir) {
-            comp_pb = load_best_compass_pixbuf(compass_dir, azimuth_str, comp_w);
-            g_free(compass_dir);
+        if (cidx) {
+            comp_pb = compass_index_load_pixbuf(cidx, azimuth_str, comp_w);
+        } else {
+            compass_dir = g_file_get_path(snap->file_compass);
+            if (compass_dir) {
+                comp_pb = load_best_compass_pixbuf(compass_dir, azimuth_str, comp_w);
+                g_free(compass_dir);
+            }
         }
 
         if (comp_pb) {
@@ -509,20 +602,43 @@ static GdkPixbuf *render_stamped_pixbuf_from_snapshot(GFile *image_file, const E
         g_free(clean_text);
     }
 
-    g_free(orig_basename);
     g_free(custom_text);
     g_free(azimuth_str);
-    g_free(path);
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    pixbuf = gdk_pixbuf_get_from_surface(surface, 0, 0, width, height);
+    res_pixbuf = gdk_pixbuf_get_from_surface(surface, 0, 0, width, height);
 #pragma GCC diagnostic pop
 
     cairo_destroy(cr);
     cairo_surface_destroy(surface);
 
-    return pixbuf;
+    return res_pixbuf;
+}
+
+static GdkPixbuf *render_stamped_pixbuf_from_snapshot(GFile *image_file, const ExportSettingsSnapshot *snap, const char *in_custom_text, const char *in_azimuth_str, CompassIndex *cidx) {
+    char *path;
+    GdkPixbuf *raw_pixbuf;
+    GdkPixbuf *pixbuf = NULL;
+    GdkPixbuf *res = NULL;
+
+    if (!image_file) return NULL;
+
+    path = g_file_get_path(image_file);
+    if (!path) return NULL;
+
+    raw_pixbuf = gdk_pixbuf_new_from_file(path, NULL);
+    g_free(path);
+    if (!raw_pixbuf) return NULL;
+
+    pixbuf = gdk_pixbuf_apply_embedded_orientation(raw_pixbuf);
+    g_object_unref(raw_pixbuf);
+    if (!pixbuf) return NULL;
+
+    res = render_stamped_on_pixbuf(pixbuf, snap, in_custom_text, in_azimuth_str, cidx);
+    g_object_unref(pixbuf);
+
+    return res;
 }
 
 void stampy_render_live_preview(StampyWindow *window_self) {
@@ -537,10 +653,29 @@ void stampy_render_live_preview(StampyWindow *window_self) {
         if (idx >= 0 && idx < (int)window_self->image_files->len) {
             GFile *file = g_ptr_array_index(window_self->image_files, idx);
             if (file) {
-                GdkPixbuf *stamped;
+                GdkPixbuf *stamped = NULL;
                 char *orig_basename = g_file_get_basename(file);
+                char *file_path = g_file_get_path(file);
                 char *custom_text = NULL;
                 char *azimuth_str = NULL;
+
+                if (file_path) {
+                    if (!window_self->preview_cached_pixbuf ||
+                        !window_self->preview_cached_path ||
+                        strcmp(window_self->preview_cached_path, file_path) != 0) {
+                        GdkPixbuf *raw = gdk_pixbuf_new_from_file_at_scale(file_path, 1600, 1600, TRUE, NULL);
+                        if (!raw) raw = gdk_pixbuf_new_from_file(file_path, NULL);
+                        if (raw) {
+                            if (window_self->preview_cached_pixbuf)
+                                g_object_unref(window_self->preview_cached_pixbuf);
+                            window_self->preview_cached_pixbuf = gdk_pixbuf_apply_embedded_orientation(raw);
+                            g_object_unref(raw);
+                            g_free(window_self->preview_cached_path);
+                            window_self->preview_cached_path = g_strdup(file_path);
+                        }
+                    }
+                    g_free(file_path);
+                }
 
                 if (orig_basename && *orig_basename != '\0') {
                     int photo_id = extract_id_from_filename(orig_basename);
@@ -565,7 +700,11 @@ void stampy_render_live_preview(StampyWindow *window_self) {
                 }
 
                 snapshot_export_settings(window_self, &snap);
-                stamped = render_stamped_pixbuf_from_snapshot(file, &snap, custom_text, azimuth_str);
+                if (window_self->preview_cached_pixbuf) {
+                    stamped = render_stamped_on_pixbuf(window_self->preview_cached_pixbuf, &snap, custom_text, azimuth_str, NULL);
+                } else {
+                    stamped = render_stamped_pixbuf_from_snapshot(file, &snap, custom_text, azimuth_str, NULL);
+                }
 
                 if (stamped) {
 #pragma GCC diagnostic push
@@ -595,15 +734,27 @@ static gboolean update_ui_progress_idle(gpointer user_data) {
     if (data->self) {
         stampy_set_progress(data->self, data->fraction, data->visible);
 
+        if (data->visible && data->fraction > 0.0 && !data->is_finished) {
+            char *title = g_strdup_printf("Exporting… %d%%",
+                                          (int)(data->fraction * 100.0 + 0.5));
+            gtk_window_set_title(GTK_WINDOW(data->self), title);
+            g_free(title);
+        }
+
         if (data->message) {
             if (data->is_toast) {
                 stampy_show_toast(data->self, data->message);
+            } else if (strstr(data->message, "photos processed") != NULL) {
+                /* Live progress reuses one terminal line instead of scrolling. */
+                stampy_update_status_line(data->self, data->message);
             } else {
                 stampy_append_log(data->self, data->message);
             }
         }
 
         if (data->is_finished) {
+            data->self->export_active = FALSE;
+            gtk_window_set_title(GTK_WINDOW(data->self), "Stampy");
             if (data->self->btn_header_export) gtk_widget_set_visible(data->self->btn_header_export, TRUE);
             if (data->self->btn_header_cancel) gtk_widget_set_visible(data->self->btn_header_cancel, FALSE);
             if (data->self->box_right_panel) gtk_widget_set_sensitive(data->self->box_right_panel, TRUE);
@@ -635,6 +786,214 @@ static gchar *format_double_safe(double val, int decimals) {
         if (*p == ',') *p = '.';
     }
     return g_strdup(buf);
+}
+
+static void set_gexiv2_xp_tag(GExiv2Metadata *meta, const char *tag, const char *utf8_text) {
+    glong items_written = 0;
+    guint16 *u16;
+    GString *bstr;
+    glong i;
+    guint16 val;
+    guint8 b0;
+    guint8 b1;
+
+    if (!meta || !tag || !utf8_text || *utf8_text == '\0') return;
+
+    u16 = g_utf8_to_utf16(utf8_text, -1, NULL, &items_written, NULL);
+    if (!u16) return;
+
+    bstr = g_string_sized_new((items_written + 1) * 8);
+    for (i = 0; i <= items_written; i++) {
+        val = (i < items_written) ? u16[i] : 0;
+        b0 = (guint8)(val & 0xFF);
+        b1 = (guint8)((val >> 8) & 0xFF);
+        if (i > 0) g_string_append_c(bstr, ' ');
+        g_string_append_printf(bstr, "%u %u", (unsigned int)b0, (unsigned int)b1);
+    }
+
+    gexiv2_metadata_try_set_tag_string(meta, tag, bstr->str, NULL);
+    g_string_free(bstr, TRUE);
+    g_free(u16);
+}
+
+static GExiv2Metadata *stampy_gexiv2_open_source(const char *src_path, GError **error) {
+    GExiv2Metadata *meta = gexiv2_metadata_new();
+    GError *open_err = NULL;
+
+    if (gexiv2_metadata_open_path(meta, src_path, &open_err)) {
+        return meta;
+    }
+
+    /* Fallback for JPEGs with corrupted/non-standard non-EXIF segments (e.g. invalid ICC profiles):
+       Extract the APP1 EXIF segment directly and load it via gexiv2_metadata_from_app1_segment. */
+    if (src_path) {
+        gchar *contents = NULL;
+        gsize length = 0;
+        if (g_file_get_contents(src_path, &contents, &length, NULL)) {
+            const guint8 *data = (const guint8 *)contents;
+            if (length > 4 && data[0] == 0xFF && data[1] == 0xD8) {
+                gsize pos = 2;
+                while (pos + 4 <= length) {
+                    guint8 marker;
+                    guint16 seg_len;
+                    if (data[pos] != 0xFF) break;
+                    marker = data[pos + 1];
+                    if (marker == 0xD8 || marker == 0xD9 || marker == 0x00) {
+                        pos += 1;
+                        continue;
+                    }
+                    seg_len = (((guint16)data[pos + 2]) << 8) | data[pos + 3];
+                    if (seg_len < 2 || pos + 2 + seg_len > length) break;
+                    if (marker == 0xE1) {
+                        const guint8 *payload = data + pos + 2;
+                        if (seg_len >= 8 && memcmp(payload + 2, "Exif\0\0", 6) == 0) {
+                            GError *app1_err = NULL;
+                            GExiv2Metadata *app1_meta = gexiv2_metadata_new();
+                            if (gexiv2_metadata_from_app1_segment(app1_meta, payload, seg_len, &app1_err)) {
+                                g_clear_error(&open_err);
+                                g_free(contents);
+                                g_object_unref(meta);
+                                return app1_meta;
+                            }
+                            g_clear_error(&app1_err);
+                            g_object_unref(app1_meta);
+                        }
+                    }
+                    pos += 2 + seg_len;
+                }
+            }
+            g_free(contents);
+        }
+    }
+
+    if (error && open_err) {
+        *error = open_err;
+    } else if (open_err) {
+        g_clear_error(&open_err);
+    }
+    g_object_unref(meta);
+    return NULL;
+}
+
+static void stampy_ensure_standard_exif_tags(GExiv2Metadata *meta) {
+    if (!meta) return;
+    if (!gexiv2_metadata_try_has_tag(meta, "Exif.Photo.ColorSpace", NULL)) {
+        gexiv2_metadata_try_set_tag_string(meta, "Exif.Photo.ColorSpace", "65535", NULL);
+    }
+    if (!gexiv2_metadata_try_has_tag(meta, "Exif.Photo.ExifVersion", NULL)) {
+        gexiv2_metadata_try_set_tag_string(meta, "Exif.Photo.ExifVersion", "48 50 51 50", NULL);
+    }
+    if (!gexiv2_metadata_try_has_tag(meta, "Exif.Photo.ComponentsConfiguration", NULL)) {
+        gexiv2_metadata_try_set_tag_string(meta, "Exif.Photo.ComponentsConfiguration", "1 2 3 0", NULL);
+    }
+    if (!gexiv2_metadata_try_has_tag(meta, "Exif.Photo.FlashpixVersion", NULL)) {
+        gexiv2_metadata_try_set_tag_string(meta, "Exif.Photo.FlashpixVersion", "48 49 48 48", NULL);
+    }
+}
+
+static void stampy_set_gps_coordinates(GExiv2Metadata *meta, double lat, double lon) {
+    double abs_lat;
+    double abs_lon;
+    char lat_ref;
+    char lon_ref;
+    int lat_deg;
+    double lat_rem1;
+    int lat_min;
+    double lat_rem2;
+    long long lat_sec_num;
+    int lon_deg;
+    double lon_rem1;
+    int lon_min;
+    double lon_rem2;
+    long long lon_sec_num;
+    char buf[128];
+    char ref_buf[2];
+
+    if (!meta) return;
+
+    abs_lat = fabs(lat);
+    abs_lon = fabs(lon);
+    lat_ref = (lat >= 0.0) ? 'N' : 'S';
+    lon_ref = (lon >= 0.0) ? 'E' : 'W';
+
+    lat_deg = (int)floor(abs_lat);
+    lat_rem1 = (abs_lat - (double)lat_deg) * 60.0;
+    lat_min = (int)floor(lat_rem1);
+    lat_rem2 = (lat_rem1 - (double)lat_min) * 60.0;
+    lat_sec_num = (long long)llround(lat_rem2 * 10000000.0);
+
+    lon_deg = (int)floor(abs_lon);
+    lon_rem1 = (abs_lon - (double)lon_deg) * 60.0;
+    lon_min = (int)floor(lon_rem1);
+    lon_rem2 = (lon_rem1 - (double)lon_min) * 60.0;
+    lon_sec_num = (long long)llround(lon_rem2 * 10000000.0);
+
+    /* EXIF GPS Tags */
+    snprintf(buf, sizeof(buf), "%d/1 %d/1 %lld/10000000", lat_deg, lat_min, lat_sec_num);
+    gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSLatitude", buf, NULL);
+
+    ref_buf[0] = lat_ref;
+    ref_buf[1] = '\0';
+    gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSLatitudeRef", ref_buf, NULL);
+
+    snprintf(buf, sizeof(buf), "%d/1 %d/1 %lld/10000000", lon_deg, lon_min, lon_sec_num);
+    gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSLongitude", buf, NULL);
+
+    ref_buf[0] = lon_ref;
+    ref_buf[1] = '\0';
+    gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSLongitudeRef", ref_buf, NULL);
+
+    gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSVersionID", "2 3 0 0", NULL);
+    gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSMapDatum", "WGS-84", NULL);
+
+    /* XMP GPS Tags */
+    snprintf(buf, sizeof(buf), "%d,%.6f%c", lat_deg, lat_rem1, lat_ref);
+    gexiv2_metadata_try_set_tag_string(meta, "Xmp.exif.GPSLatitude", buf, NULL);
+
+    snprintf(buf, sizeof(buf), "%d,%.6f%c", lon_deg, lon_rem1, lon_ref);
+    gexiv2_metadata_try_set_tag_string(meta, "Xmp.exif.GPSLongitude", buf, NULL);
+
+    gexiv2_metadata_try_set_tag_string(meta, "Xmp.exif.GPSVersionID", "2.3.0.0", NULL);
+    gexiv2_metadata_try_set_tag_string(meta, "Xmp.exif.GPSMapDatum", "WGS-84", NULL);
+}
+
+static gchar *stampy_resolve_timezone_offset(GExiv2Metadata *meta) {
+    gchar *tz_offset = NULL;
+
+    if (meta) {
+        tz_offset = gexiv2_metadata_try_get_tag_string(meta, "Exif.Photo.OffsetTimeOriginal", NULL);
+        if (!tz_offset)
+            tz_offset = gexiv2_metadata_try_get_tag_string(meta, "Exif.Photo.OffsetTime", NULL);
+        if (!tz_offset)
+            tz_offset = gexiv2_metadata_try_get_tag_string(meta, "Exif.Photo.OffsetTimeDigitized", NULL);
+
+        if (!tz_offset) {
+            gchar *xmp_orig = gexiv2_metadata_try_get_tag_string(meta, "Xmp.exif.DateTimeOriginal", NULL);
+            if (!xmp_orig)
+                xmp_orig = gexiv2_metadata_try_get_tag_string(meta, "Xmp.xmp.CreateDate", NULL);
+            if (xmp_orig) {
+                gsize len = strlen(xmp_orig);
+                if (len >= 6 && (xmp_orig[len - 6] == '+' || xmp_orig[len - 6] == '-') && xmp_orig[len - 3] == ':') {
+                    tz_offset = g_strdup(xmp_orig + len - 6);
+                }
+                g_free(xmp_orig);
+            }
+        }
+    }
+
+    if (!tz_offset) {
+        GDateTime *now = g_date_time_new_now_local();
+        if (now) {
+            tz_offset = g_date_time_format(now, "%:z");
+            g_date_time_unref(now);
+        }
+    }
+
+    if (!tz_offset) {
+        tz_offset = g_strdup("+07:00");
+    }
+
+    return tz_offset;
 }
 
 static char *get_exiftool_cmd(void) {
@@ -705,7 +1064,7 @@ static void export_image_worker(gpointer data, gpointer user_data) {
         }
     }
 
-    stamped = render_stamped_pixbuf_from_snapshot(file, &ctx->snapshot, custom_text, azimuth_str);
+    stamped = render_stamped_pixbuf_from_snapshot(file, &ctx->snapshot, custom_text, azimuth_str, (CompassIndex *)ctx->compass_idx);
 
     if (stamped) {
         GError *error = NULL;
@@ -728,6 +1087,15 @@ static void export_image_worker(gpointer data, gpointer user_data) {
             char time_part[16] = {0};
             char new_dt[32] = {0};
             char iptc_date[16] = {0};
+            char tz_sys[16] = {0};
+            char iso_dt_common[64] = {0};
+            char iptc_time_common[32] = {0};
+            GExiv2Metadata *native_meta = NULL;
+            GError *native_gex_err = NULL;
+
+            if (ctx->snapshot.use_native_metadata) {
+                native_meta = stampy_gexiv2_open_source(src_path, &native_gex_err);
+            }
 
             /* Extract project description if enabled */
             if (ctx->snapshot.title_experimental && custom_text && *custom_text != '\0') {
@@ -737,27 +1105,43 @@ static void export_image_worker(gpointer data, gpointer user_data) {
             /* Extract date and time if enabled */
             if (ctx->snapshot.xlsx_time_exif && has_geo) {
                 int total_seconds, hours, minutes, seconds;
+                GDateTime *now_dt;
+                gchar *fmt_tz;
 
                 stampy_extract_docx_date(custom_text, &docx_date);
 
                 if (!docx_date && src_path && *src_path) {
-                    char *exif_cmd_fallback = get_exiftool_cmd();
-                    char *quoted_src_dt = g_shell_quote(src_path);
-                    char *read_dt_cmd = g_strdup_printf("%s -DateTimeOriginal -s3 %s", exif_cmd_fallback, quoted_src_dt);
-                    FILE *fp_dt = popen(read_dt_cmd, "r");
-                    char dt_buf[64] = {0};
-                    if (fp_dt) {
-                        if (fgets(dt_buf, sizeof(dt_buf), fp_dt)) {
+                    if (native_meta) {
+                        gchar *existing_dt = gexiv2_metadata_try_get_tag_string(native_meta, "Exif.Photo.DateTimeOriginal", NULL);
+                        if (!existing_dt)
+                            existing_dt = gexiv2_metadata_try_get_tag_string(native_meta, "Exif.Image.DateTime", NULL);
+                        if (existing_dt) {
                             char existing_date[16] = {0};
-                            if (sscanf(dt_buf, "%15[^ ]", existing_date) == 1 && strlen(existing_date) == 10) {
+                            if (sscanf(existing_dt, "%15[^ ]", existing_date) == 1 && strlen(existing_date) == 10) {
                                 docx_date = g_strdup(existing_date);
                             }
+                            g_free(existing_dt);
                         }
-                        pclose(fp_dt);
                     }
-                    g_free(read_dt_cmd);
-                    g_free(quoted_src_dt);
-                    g_free(exif_cmd_fallback);
+                    if (!docx_date && !ctx->snapshot.use_native_metadata) {
+                        char *exif_cmd_fallback = get_exiftool_cmd();
+                        char *quoted_src_dt = g_shell_quote(src_path);
+                        char *read_dt_cmd = g_strdup_printf("%s -DateTimeOriginal -s3 %s", exif_cmd_fallback, quoted_src_dt);
+                        FILE *fp_dt = popen(read_dt_cmd, "r");
+                        char dt_buf[64] = {0};
+                        if (fp_dt) {
+                            if (fgets(dt_buf, sizeof(dt_buf), fp_dt)) {
+                                char existing_date[16] = {0};
+                                if (sscanf(dt_buf, "%15[^ ]", existing_date) == 1 && strlen(existing_date) == 10) {
+                                    docx_date = g_strdup(existing_date);
+                                }
+                            }
+                            pclose(fp_dt);
+                        }
+                        g_free(read_dt_cmd);
+                        g_free(quoted_src_dt);
+                        g_free(exif_cmd_fallback);
+                    }
                 }
 
                 if (geo_entry.time_val > 0.0) {
@@ -773,56 +1157,111 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                 }
 
                 if (docx_date && strlen(docx_date) == 10) {
+                    now_dt = g_date_time_new_now_local();
+                    if (now_dt) {
+                        fmt_tz = g_date_time_format(now_dt, "%:z");
+                        if (fmt_tz) {
+                            g_strlcpy(tz_sys, fmt_tz, sizeof(tz_sys));
+                            g_free(fmt_tz);
+                        }
+                        g_date_time_unref(now_dt);
+                    }
+                    if (tz_sys[0] == '\0') {
+                        g_strlcpy(tz_sys, "+07:00", sizeof(tz_sys));
+                    }
+
                     /* EXIF date/time: "YYYY:MM:DD HH:MM:SS" (colons). */
                     snprintf(new_dt, sizeof(new_dt), "%s %s", docx_date, time_part);
                     /* IPTC date: "YYYY-MM-DD" (dashes). */
                     snprintf(iptc_date, sizeof(iptc_date), "%.4s-%.2s-%.2s",
                              docx_date, docx_date + 5, docx_date + 8);
+                    /* ISO-8601 date-time: "YYYY-MM-DDTHH:MM:SS+07:00" */
+                    snprintf(iso_dt_common, sizeof(iso_dt_common), "%.4s-%.2s-%.2sT%s%s",
+                             docx_date, docx_date + 5, docx_date + 8, time_part, tz_sys);
+                    snprintf(iptc_time_common, sizeof(iptc_time_common), "%s%s", time_part, tz_sys);
                 }
             }
 
             if (ctx->snapshot.use_native_metadata) {
                 /* Option 3: In-memory GExiv2 metadata writer (0 subprocesses) */
-                GError *gex_err = NULL;
-                GExiv2Metadata *meta = gexiv2_metadata_new();
+                GError *gex_err = native_gex_err;
+                GExiv2Metadata *meta = native_meta;
 
-                if (gexiv2_metadata_open_path(meta, src_path, &gex_err) ||
-                    gexiv2_metadata_open_path(meta, out_path, NULL)) {
+                if (!meta) {
+                    meta = gexiv2_metadata_new();
+                    if (!gexiv2_metadata_open_path(meta, out_path, NULL)) {
+                        char *wmsg = g_strdup_printf("[WARN] gexiv2 open failed for %s: %s",
+                                                    orig_basename, gex_err ? gex_err->message : "Unknown");
+                        send_progress_to_ui(window_self, 0.0, FALSE, wmsg, FALSE, FALSE);
+                        g_free(wmsg);
+                        g_clear_error(&gex_err);
+                        g_object_unref(meta);
+                        meta = NULL;
+                    }
+                }
+
+                if (meta) {
                     g_clear_error(&gex_err);
                     gexiv2_metadata_try_set_orientation(meta, GEXIV2_ORIENTATION_NORMAL, NULL);
+                    stampy_ensure_standard_exif_tags(meta);
 
                     if (has_geo) {
-                        gexiv2_metadata_try_set_gps_info(meta, geo_entry.longitude, geo_entry.latitude, 0.0, NULL);
+                        stampy_set_gps_coordinates(meta, geo_entry.latitude, geo_entry.longitude);
+
                         if (clean_heading_val >= 0.0) {
+                            double clean_heading = fmod(clean_heading_val, 360.0);
+                            gint nom;
                             char head_buf[32];
-                            snprintf(head_buf, sizeof(head_buf), "%.2f", clean_heading_val);
-                            gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSImgDirection", head_buf, NULL);
+                            if (clean_heading < 0.0) clean_heading += 360.0;
+                            nom = (gint)lround(clean_heading * 100.0);
+                            snprintf(head_buf, sizeof(head_buf), "%d/100", nom);
+
+                            gexiv2_metadata_try_set_exif_tag_rational(meta, "Exif.GPSInfo.GPSImgDirection", nom, 100, NULL);
                             gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSImgDirectionRef", "T", NULL);
+                            gexiv2_metadata_try_set_tag_string(meta, "Xmp.exif.GPSImgDirection", head_buf, NULL);
+                            gexiv2_metadata_try_set_tag_string(meta, "Xmp.exif.GPSImgDirectionRef", "T", NULL);
                         }
                     }
 
                     if (desc_text && *desc_text != '\0') {
+                        set_gexiv2_xp_tag(meta, "Exif.Image.XPTitle", desc_text);
+                        set_gexiv2_xp_tag(meta, "Exif.Image.XPComment", desc_text);
                         gexiv2_metadata_try_set_tag_string(meta, "Exif.Image.ImageDescription", desc_text, NULL);
                         gexiv2_metadata_try_set_tag_string(meta, "Xmp.dc.description", desc_text, NULL);
                         gexiv2_metadata_try_set_tag_string(meta, "Xmp.dc.title", desc_text, NULL);
                     }
 
                     if (new_dt[0] != '\0') {
+                        gchar *tz = stampy_resolve_timezone_offset(meta);
+                        char iso_dt[64];
+                        char iptc_time[32];
+
+                        snprintf(iso_dt, sizeof(iso_dt), "%.4s-%.2s-%.2sT%s%s",
+                                 docx_date, docx_date + 5, docx_date + 8, time_part, tz);
+                        snprintf(iptc_time, sizeof(iptc_time), "%s%s", time_part, tz);
+
                         gexiv2_metadata_try_set_tag_string(meta, "Exif.Photo.DateTimeOriginal", new_dt, NULL);
                         gexiv2_metadata_try_set_tag_string(meta, "Exif.Photo.DateTimeDigitized", new_dt, NULL);
                         gexiv2_metadata_try_set_tag_string(meta, "Exif.Image.DateTime", new_dt, NULL);
-                        gexiv2_metadata_try_set_tag_string(meta, "Xmp.exif.DateTimeOriginal", new_dt, NULL);
-                        gexiv2_metadata_try_set_tag_string(meta, "Xmp.exif.DateTimeDigitized", new_dt, NULL);
-                        gexiv2_metadata_try_set_tag_string(meta, "Xmp.xmp.CreateDate", new_dt, NULL);
-                        gexiv2_metadata_try_set_tag_string(meta, "Xmp.xmp.ModifyDate", new_dt, NULL);
+
+                        gexiv2_metadata_try_set_tag_string(meta, "Exif.Photo.OffsetTimeOriginal", tz, NULL);
+                        gexiv2_metadata_try_set_tag_string(meta, "Exif.Photo.OffsetTimeDigitized", tz, NULL);
+                        gexiv2_metadata_try_set_tag_string(meta, "Exif.Photo.OffsetTime", tz, NULL);
+
+                        gexiv2_metadata_try_set_tag_string(meta, "Xmp.exif.DateTimeOriginal", iso_dt, NULL);
+                        gexiv2_metadata_try_set_tag_string(meta, "Xmp.exif.DateTimeDigitized", iso_dt, NULL);
+                        gexiv2_metadata_try_set_tag_string(meta, "Xmp.xmp.CreateDate", iso_dt, NULL);
+                        gexiv2_metadata_try_set_tag_string(meta, "Xmp.xmp.ModifyDate", iso_dt, NULL);
+                        gexiv2_metadata_try_set_tag_string(meta, "Xmp.photoshop.DateCreated", iso_dt, NULL);
+
                         if (docx_date && time_part[0] != '\0') {
                             gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSDateStamp", docx_date, NULL);
                             gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSTimeStamp", time_part, NULL);
                         }
-                        if (iptc_date[0] != '\0') {
-                            gexiv2_metadata_try_set_tag_string(meta, "Iptc.Application2.DateCreated", iptc_date, NULL);
-                            gexiv2_metadata_try_set_tag_string(meta, "Iptc.Application2.TimeCreated", time_part, NULL);
-                        }
+                        /* Clear IPTC DateCreated to prevent it from clobbering DateCreated in exiftool -csv */
+                        gexiv2_metadata_try_clear_tag(meta, "Iptc.Application2.DateCreated", NULL);
+                        gexiv2_metadata_try_set_tag_string(meta, "Iptc.Application2.TimeCreated", iptc_time, NULL);
+                        g_free(tz);
                     }
 
                     if (!gexiv2_metadata_save_file(meta, out_path, &gex_err)) {
@@ -832,14 +1271,8 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                         g_free(wmsg);
                         g_clear_error(&gex_err);
                     }
-                } else {
-                    char *wmsg = g_strdup_printf("[WARN] gexiv2 open failed for %s: %s",
-                                                orig_basename, gex_err ? gex_err->message : "Unknown");
-                    send_progress_to_ui(window_self, 0.0, FALSE, wmsg, FALSE, FALSE);
-                    g_free(wmsg);
-                    g_clear_error(&gex_err);
+                    g_object_unref(meta);
                 }
-                g_object_unref(meta);
             } else if (ctx->argfile_fp != NULL) {
                 /* Option 2: Write commands to batch argfile (-@) */
                 g_mutex_lock(&ctx->argfile_mutex);
@@ -875,6 +1308,7 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                     fprintf(ctx->argfile_fp, "-XMP:Title=%s\n", desc_text);
                     fprintf(ctx->argfile_fp, "-XMP:Description=%s\n", desc_text);
                     fprintf(ctx->argfile_fp, "-XPTitle=%s\n", desc_text);
+                    fprintf(ctx->argfile_fp, "-XPComment=%s\n", desc_text);
                     fprintf(ctx->argfile_fp, "-ImageDescription=%s\n", desc_text);
                 }
 
@@ -882,14 +1316,19 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                     fprintf(ctx->argfile_fp, "-EXIF:DateTimeOriginal=%s\n", new_dt);
                     fprintf(ctx->argfile_fp, "-EXIF:CreateDate=%s\n", new_dt);
                     fprintf(ctx->argfile_fp, "-EXIF:ModifyDate=%s\n", new_dt);
-                    fprintf(ctx->argfile_fp, "-XMP-exif:DateTimeOriginal=%s\n", new_dt);
-                    fprintf(ctx->argfile_fp, "-XMP-exif:DateTimeDigitized=%s\n", new_dt);
-                    fprintf(ctx->argfile_fp, "-XMP-xmp:CreateDate=%s\n", new_dt);
-                    fprintf(ctx->argfile_fp, "-XMP-xmp:ModifyDate=%s\n", new_dt);
-                    fprintf(ctx->argfile_fp, "-XMP-photoshop:DateCreated=%s\n", new_dt);
+                    if (tz_sys[0] != '\0') {
+                        fprintf(ctx->argfile_fp, "-OffsetTimeOriginal=%s\n", tz_sys);
+                        fprintf(ctx->argfile_fp, "-OffsetTimeDigitized=%s\n", tz_sys);
+                        fprintf(ctx->argfile_fp, "-OffsetTime=%s\n", tz_sys);
+                    }
+                    fprintf(ctx->argfile_fp, "-XMP-exif:DateTimeOriginal=%s\n", iso_dt_common[0] ? iso_dt_common : new_dt);
+                    fprintf(ctx->argfile_fp, "-XMP-exif:DateTimeDigitized=%s\n", iso_dt_common[0] ? iso_dt_common : new_dt);
+                    fprintf(ctx->argfile_fp, "-XMP-xmp:CreateDate=%s\n", iso_dt_common[0] ? iso_dt_common : new_dt);
+                    fprintf(ctx->argfile_fp, "-XMP-xmp:ModifyDate=%s\n", iso_dt_common[0] ? iso_dt_common : new_dt);
+                    fprintf(ctx->argfile_fp, "-XMP-photoshop:DateCreated=%s\n", iso_dt_common[0] ? iso_dt_common : new_dt);
                     if (docx_date && time_part[0] != '\0') {
-                        fprintf(ctx->argfile_fp, "-IPTC:DateCreated=%s\n", iptc_date[0] ? iptc_date : docx_date);
-                        fprintf(ctx->argfile_fp, "-IPTC:TimeCreated=%s\n", time_part);
+                        fprintf(ctx->argfile_fp, "-IPTC:DateCreated=\n");
+                        fprintf(ctx->argfile_fp, "-IPTC:TimeCreated=%s\n", iptc_time_common[0] ? iptc_time_common : time_part);
                         fprintf(ctx->argfile_fp, "-GPSDateStamp=%s\n", docx_date);
                         fprintf(ctx->argfile_fp, "-GPSTimeStamp=%s\n", time_part);
                     }
@@ -938,25 +1377,34 @@ static void export_image_worker(gpointer data, gpointer user_data) {
 
                 if (desc_text && *desc_text != '\0') {
                     g_string_append_printf(cmd,
-                        "-XMP:Title=\"%s\" -XMP:Description=\"%s\" -XPTitle=\"%s\" -ImageDescription=\"%s\" ",
-                        desc_text, desc_text, desc_text, desc_text);
+                        "-XMP:Title=\"%s\" -XMP:Description=\"%s\" -XPTitle=\"%s\" -XPComment=\"%s\" -ImageDescription=\"%s\" ",
+                        desc_text, desc_text, desc_text, desc_text, desc_text);
                 }
 
                 if (new_dt[0] != '\0') {
                     g_string_append_printf(cmd,
-                        "-EXIF:DateTimeOriginal=\"%s\" -EXIF:CreateDate=\"%s\" -EXIF:ModifyDate=\"%s\" "
+                        "-EXIF:DateTimeOriginal=\"%s\" -EXIF:CreateDate=\"%s\" -EXIF:ModifyDate=\"%s\" ",
+                        new_dt, new_dt, new_dt);
+                    if (tz_sys[0] != '\0') {
+                        g_string_append_printf(cmd,
+                            "-OffsetTimeOriginal=\"%s\" -OffsetTimeDigitized=\"%s\" -OffsetTime=\"%s\" ",
+                            tz_sys, tz_sys, tz_sys);
+                    }
+                    g_string_append_printf(cmd,
                         "-XMP-exif:DateTimeOriginal=\"%s\" -XMP-exif:DateTimeDigitized=\"%s\" "
                         "-XMP-xmp:CreateDate=\"%s\" -XMP-xmp:ModifyDate=\"%s\" "
                         "-XMP-photoshop:DateCreated=\"%s\" ",
-                        new_dt, new_dt, new_dt,
-                        new_dt, new_dt,
-                        new_dt, new_dt,
-                        new_dt);
+                        iso_dt_common[0] ? iso_dt_common : new_dt,
+                        iso_dt_common[0] ? iso_dt_common : new_dt,
+                        iso_dt_common[0] ? iso_dt_common : new_dt,
+                        iso_dt_common[0] ? iso_dt_common : new_dt,
+                        iso_dt_common[0] ? iso_dt_common : new_dt);
                     if (docx_date && time_part[0] != '\0') {
                         g_string_append_printf(cmd,
-                            "-IPTC:DateCreated=\"%s\" -IPTC:TimeCreated=\"%s\" "
+                            "-IPTC:DateCreated= -IPTC:TimeCreated=\"%s\" "
                             "-GPSDateStamp=\"%s\" -GPSTimeStamp=\"%s\" ",
-                            iptc_date[0] ? iptc_date : docx_date, time_part, docx_date, time_part);
+                            iptc_time_common[0] ? iptc_time_common : time_part,
+                            docx_date, time_part);
                     }
                 }
 
@@ -1003,9 +1451,9 @@ static void export_image_worker(gpointer data, gpointer user_data) {
     g_free(out_path);
     g_free(item);
 
-    /* Report progress. */
+    /* Report progress on every image; the UI updates it in place on one line. */
     done = g_atomic_int_add(&ctx->completed, 1) + 1;
-    if (done % 10 == 0 || done == (int)total) {
+    {
         char *msg = g_strdup_printf("[%d/%u] photos processed...", done, total);
         send_progress_to_ui(window_self, (double)done / (double)total, TRUE, msg, FALSE, FALSE);
         g_free(msg);
@@ -1088,7 +1536,16 @@ static gpointer export_worker_thread(gpointer user_data) {
         ctx.completed = 0;
         ctx.argfile_fp = NULL;
         ctx.argfile_path = NULL;
+        ctx.compass_idx = NULL;
         g_mutex_init(&ctx.argfile_mutex);
+
+        if (ctx.snapshot.has_compass && ctx.snapshot.file_compass) {
+            char *compass_dir = g_file_get_path(ctx.snapshot.file_compass);
+            if (compass_dir) {
+                ctx.compass_idx = compass_index_new(compass_dir);
+                g_free(compass_dir);
+            }
+        }
 
         if (ctx.snapshot.batch_exiftool && !ctx.snapshot.use_native_metadata) {
             int arg_fd;
@@ -1114,6 +1571,11 @@ static gpointer export_worker_thread(gpointer user_data) {
         } else {
             send_progress_to_ui(window_self, 0.0, FALSE, "[ERROR] Failed to create thread pool.", FALSE, TRUE);
             g_error_free(pool_err);
+        }
+
+        if (ctx.compass_idx) {
+            compass_index_free((CompassIndex *)ctx.compass_idx);
+            ctx.compass_idx = NULL;
         }
 
         if (ctx.argfile_fp) {
@@ -1188,19 +1650,12 @@ static gpointer export_worker_thread(gpointer user_data) {
     return NULL;
 }
 
-static void on_export_folder_selected(GObject *source, GAsyncResult *res, gpointer user_data) {
-    GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
-    StampyWindow *window_self = STAMPY_WINDOW(user_data);
-    GError *error = NULL;
-    GFile *folder = gtk_file_dialog_select_folder_finish(dialog, res, &error);
+static void begin_export_to_folder(StampyWindow *window_self, GFile *folder) {
     ExportThreadData *td;
 
-    if (error || !folder) {
-        if (error) g_clear_error(&error);
-        return;
-    }
-
     g_atomic_int_set(&window_self->export_cancel_flag, 0);
+    window_self->export_active = TRUE;
+    gtk_window_set_title(GTK_WINDOW(window_self), "Exporting…");
 
     if (window_self->btn_header_export) gtk_widget_set_visible(window_self->btn_header_export, FALSE);
     if (window_self->btn_header_cancel) gtk_widget_set_visible(window_self->btn_header_cancel, TRUE);
@@ -1227,11 +1682,31 @@ static void on_export_folder_selected(GObject *source, GAsyncResult *res, gpoint
     g_thread_new("stampy-export-thread", export_worker_thread, td);
 }
 
+static void on_export_folder_selected(GObject *source, GAsyncResult *res, gpointer user_data) {
+    GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
+    StampyWindow *window_self = STAMPY_WINDOW(user_data);
+    GError *error = NULL;
+    GFile *folder = gtk_file_dialog_select_folder_finish(dialog, res, &error);
+
+    if (error || !folder) {
+        if (error) g_clear_error(&error);
+        return;
+    }
+
+    begin_export_to_folder(window_self, folder);
+}
+
 void stampy_start_export(StampyWindow *window_self) {
     GtkFileDialog *dialog;
 
     if (!window_self || !window_self->image_files || window_self->image_files->len == 0) {
         stampy_show_toast(window_self, "No images loaded in list!");
+        return;
+    }
+
+    /* Auto-created <folder>_stamped target skips the folder picker. */
+    if (window_self->default_export_folder) {
+        begin_export_to_folder(window_self, g_object_ref(window_self->default_export_folder));
         return;
     }
 

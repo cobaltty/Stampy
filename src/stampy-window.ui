@@ -58,6 +58,13 @@
                 </style>
               </object>
             </child>
+            <child>
+              <object class="AdwBanner" id="banner_landscape">
+                <property name="title">Warning: Some photos are in horizontal (landscape) position</property>
+                <property name="button-label">See more</property>
+                <property name="revealed">false</property>
+              </object>
+            </child>
           </object>
         </child>
 
@@ -119,9 +126,11 @@
                             <property name="child">
                               <object class="GtkScrolledWindow">
                                 <property name="hscrollbar-policy">2</property>
-                                <style><class name="card"/><class name="custom-rounded-list"/></style>
                                 <child>
-                                  <object class="GtkListBox" id="file_listbox"><property name="selection-mode">3</property></object>
+                                  <object class="GtkListBox" id="file_listbox">
+                                    <property name="selection-mode">3</property>
+                                    <style><class name="navigation-sidebar"/></style>
+                                  </object>
                                 </child>
                               </object>
                             </property>
