@@ -6,46 +6,56 @@
 #include <stdlib.h>
 #include <math.h>
 
-/* Sorts files by their digit sequence ("2.jpg" before "10.jpg"). */
+static inline int extract_digits_fast(const char *name) {
+    int val = -1;
+    const char *p;
+    if (!name) return -1;
+    for (p = name; *p; p++) {
+        if (g_ascii_isdigit(*p)) {
+            if (val < 0) val = 0;
+            if (val < 100000000) val = val * 10 + (*p - '0');
+        }
+    }
+    return val;
+}
+
+/* Sorts files by their digit sequence ("2.jpg" before "10.jpg") with zero allocations. */
 static gint compare_file_basenames(gconstpointer a, gconstpointer b) {
     GFile *file_a = *(GFile **)a;
     GFile *file_b = *(GFile **)b;
-    g_autofree char *name_a = NULL;
-    g_autofree char *name_b = NULL;
-    int id_a = -1, id_b = -1;
+    const char *path_a;
+    const char *path_b;
+    const char *base_a;
+    const char *base_b;
+    int id_a, id_b;
 
     if (!file_a || !file_b) return 0;
 
-    name_a = g_file_get_basename(file_a);
-    name_b = g_file_get_basename(file_b);
+    path_a = g_file_peek_path(file_a);
+    path_b = g_file_peek_path(file_b);
 
-    /* Extract digits from name A. */
-    if (name_a) {
-        GString *da = g_string_new("");
-        for (const char *p = name_a; *p; p++) {
-            if (g_ascii_isdigit(*p)) g_string_append_c(da, *p);
-        }
-        if (da->len > 0) id_a = atoi(da->str);
-        g_string_free(da, TRUE);
+    if (path_a) {
+        base_a = strrchr(path_a, '/');
+        base_a = base_a ? base_a + 1 : path_a;
+    } else {
+        base_a = "";
     }
 
-    /* Extract digits from name B. */
-    if (name_b) {
-        GString *db = g_string_new("");
-        for (const char *p = name_b; *p; p++) {
-            if (g_ascii_isdigit(*p)) g_string_append_c(db, *p);
-        }
-        if (db->len > 0) id_b = atoi(db->str);
-        g_string_free(db, TRUE);
+    if (path_b) {
+        base_b = strrchr(path_b, '/');
+        base_b = base_b ? base_b + 1 : path_b;
+    } else {
+        base_b = "";
     }
 
-    /* Compare numerically when both names contain different numbers. */
+    id_a = extract_digits_fast(base_a);
+    id_b = extract_digits_fast(base_b);
+
     if (id_a >= 0 && id_b >= 0 && id_a != id_b) {
         return id_a - id_b;
     }
 
-    /* Fall back to alphabetical order when no usable numbers. */
-    return g_utf8_collate(name_a ? name_a : "", name_b ? name_b : "");
+    return strcmp(base_a, base_b);
 }
 
 /* Updates the preview when the listbox selection changes. */
@@ -118,8 +128,11 @@ static void on_panel_setting_changed(GtkWidget *widget, gpointer user_data) {
 static void on_metadata_inject_toggled(GObject *object, GParamSpec *pspec, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
     GtkSwitch *btn = GTK_SWITCH(object);
+    gboolean active;
+
+    (void)pspec;
     if (!self || !STAMPY_IS_WINDOW(self)) return;
-    gboolean active = gtk_switch_get_active(btn);
+    active = gtk_switch_get_active(btn);
     stampy_config_set_bool(STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, active);
     stampy_render_live_preview(self);
     stampy_schedule_save_last_state(self);
@@ -210,6 +223,7 @@ static void finish_list_population(StampyWindow *self) {
     }
 
     stampy_check_horizontal_photos(self);
+    stampy_check_missing_data(self);
 }
 
 typedef struct {
@@ -278,7 +292,8 @@ static void dedupe_image_files(StampyWindow *self) {
 
     for (i = 0; i < self->image_files->len; i++) {
         GFile *file = g_ptr_array_index(self->image_files, i);
-        char *basename;
+        const char *path;
+        const char *base;
         char *key = NULL;
         gboolean duplicate = FALSE;
 
@@ -286,8 +301,12 @@ static void dedupe_image_files(StampyWindow *self) {
 
         /* Key by basename: exports are written by basename into one folder,
          * so two files with the same name always collide anyway. */
-        basename = g_file_get_basename(file);
-        if (basename) key = g_utf8_strdown(basename, -1);
+        path = g_file_peek_path(file);
+        if (path) {
+            base = strrchr(path, '/');
+            base = base ? base + 1 : path;
+            key = g_utf8_strdown(base, -1);
+        }
 
         if (key) {
             if (g_hash_table_contains(seen, key))
@@ -309,7 +328,6 @@ static void dedupe_image_files(StampyWindow *self) {
             g_ptr_array_add(unique, g_object_ref(file));
         }
         g_free(key);
-        g_free(basename);
     }
 
     g_hash_table_unref(seen);
@@ -320,6 +338,22 @@ static void dedupe_image_files(StampyWindow *self) {
         stampy_append_log(self, "[WARN] Removed duplicate image entries.");
     } else {
         g_ptr_array_unref(unique);
+    }
+}
+
+static void clear_listbox_safely(GtkListBox *box) {
+    GtkWidget *child;
+
+    if (!box) return;
+    child = gtk_widget_get_first_child(GTK_WIDGET(box));
+    while (child != NULL) {
+        GtkWidget *next = gtk_widget_get_next_sibling(child);
+        if (GTK_IS_LIST_BOX_ROW(child)) {
+            gtk_list_box_remove(box, child);
+        } else {
+            gtk_widget_unparent(child);
+        }
+        child = next;
     }
 }
 
@@ -353,8 +387,8 @@ void stampy_populate_file_listbox(StampyWindow *self) {
     g_free(self->preview_cached_path);
     self->preview_cached_path = NULL;
 
-    /* Remove existing rows in one supported pass. */
-    gtk_list_box_remove_all(GTK_LIST_BOX(self->file_listbox));
+    /* Remove existing rows cleanly. */
+    clear_listbox_safely(GTK_LIST_BOX(self->file_listbox));
 
     if (!self->image_files || self->image_files->len == 0) {
         g_signal_handlers_unblock_matched(self->file_listbox, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, self);
@@ -389,7 +423,6 @@ void stampy_populate_file_listbox(StampyWindow *self) {
         task->self = g_object_ref(self);
         task->generation = self->populate_generation;
         task->total = total;
-        gtk_widget_set_visible(GTK_WIDGET(self->file_listbox), TRUE);
         if (self->left_stack) {
             if (gtk_stack_get_child_by_name(GTK_STACK(self->left_stack), "page_list")) {
                 gtk_stack_set_visible_child_name(GTK_STACK(self->left_stack), "page_list");
@@ -403,8 +436,6 @@ void stampy_populate_file_listbox(StampyWindow *self) {
 
 static void on_listbox_right_click(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
-    GMenu *context_menu;
-    GtkWidget *popover;
     GdkRectangle rect;
     GtkListBoxRow *row;
 
@@ -421,24 +452,27 @@ static void on_listbox_right_click(GtkGestureClick *gesture, int n_press, double
         g_list_free(selected);
     }
 
-    context_menu = g_menu_new();
-    g_menu_append(context_menu, "Add Images", "win.add-images");
-    g_menu_append(context_menu, "Select All", "win.select-all");
-    g_menu_append(context_menu, "Deselect All", "win.deselect-all");
-    g_menu_append(context_menu, "Remove Selected", "win.remove-selected");
+    if (!self->listbox_popover) {
+        GtkWidget *parent_widget = gtk_widget_get_parent(GTK_WIDGET(self->file_listbox));
+        GMenu *context_menu = g_menu_new();
 
-    popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(context_menu));
-    gtk_widget_set_parent(popover, GTK_WIDGET(self->file_listbox));
+        g_menu_append(context_menu, "Add Images", "win.add-images");
+        g_menu_append(context_menu, "Select All", "win.select-all");
+        g_menu_append(context_menu, "Deselect All", "win.deselect-all");
+        g_menu_append(context_menu, "Remove Selected", "win.remove-selected");
+
+        self->listbox_popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(context_menu));
+        gtk_widget_set_parent(self->listbox_popover, parent_widget ? parent_widget : GTK_WIDGET(self));
+        g_object_unref(context_menu);
+    }
 
     rect.x = (int)x;
     rect.y = (int)y;
     rect.width = 1;
     rect.height = 1;
 
-    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
-    gtk_popover_popup(GTK_POPOVER(popover));
-
-    g_object_unref(context_menu);
+    gtk_popover_set_pointing_to(GTK_POPOVER(self->listbox_popover), &rect);
+    gtk_popover_popup(GTK_POPOVER(self->listbox_popover));
 }
 
 static void on_select_all_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
@@ -568,11 +602,18 @@ static void on_clear_all_clicked(GtkButton *btn, gpointer user_data) {
 
     g_clear_object(&self->file_watermark);
     g_clear_object(&self->file_geolocation);
+    stampy_invalidate_docx_cache(self);
+
+    if (self->banner_critical_coords) {
+        adw_banner_set_revealed(ADW_BANNER(self->banner_critical_coords), FALSE);
+    }
+    g_clear_pointer(&self->critical_coords_details, g_free);
 
     if (self->lbl_watermark) gtk_label_set_text(GTK_LABEL(self->lbl_watermark), "Add Watermark(.docx)");
     if (self->lbl_geolocation) gtk_label_set_text(GTK_LABEL(self->lbl_geolocation), "Add Geolocation(.xlsx)");
 
     stampy_populate_file_listbox(self);
+    stampy_check_missing_data(self);
 
     if (self->img_preview) {
         gtk_picture_set_paintable(GTK_PICTURE(self->img_preview), NULL);
@@ -584,7 +625,7 @@ static void on_clear_all_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 /* Shows the "What's New" dialog. */
-#define STAMPY_RELEASE_DATE "2026-10-19"
+#define STAMPY_RELEASE_DATE "2026-10-20"
 
 static GtkWidget *whats_new_bullet(const char *text) {
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -669,33 +710,12 @@ static void on_whats_new_activated(GSimpleAction *action, GVariant *parameter, g
     gtk_widget_set_hexpand(content, TRUE);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), content);
 
-    gtk_box_append(GTK_BOX(content), whats_new_heading("Metadata engine"));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Preferences now let you pick the metadata engine: per-image ExifTool, a single ExifTool call per photo, batched ExifTool, or the native in-memory gexiv2 engine."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Batched and native engines avoid spawning a process per photo, which is much faster for large exports."));
-    gtk_box_append(GTK_BOX(content), whats_new_heading("Experimental image properties"));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Optionally inject DOCX watermark text into exported image title and description metadata."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Optionally inject XLSX clock/time values into EXIF DateTimeOriginal, DateTimeDigitized, and DateTime."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Preferences and main-panel metadata switches stay synchronized."));
-    gtk_box_append(GTK_BOX(content), whats_new_heading("Metadata improvements"));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("XLSX columns for ID, longitude, latitude, azimuth, and time are detected from the header row."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Indonesian dates in DOCX watermark text are combined with the XLSX clock/time into a full EXIF date/time (for example, \"Kamis, 23 Juli 2026\" + 10:17:57 becomes \"2026:07:23 10:17:57\")."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Dates without a time default to 00:00:00 so EXIF tags always stay valid."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("IPTC DateCreated is written in YYYY-MM-DD format."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Filenames with plot prefixes match the right row (for example, \"PU.245 (11).jpg\" or \"PU.245_11.jpg\" both resolve to 11)."));
+    gtk_box_append(GTK_BOX(content), whats_new_heading("Increments support"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Added support for increments."));
     gtk_box_append(GTK_BOX(content), whats_new_heading("Quality of life"));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Dropping a folder now auto-loads a .docx watermark and an .xlsx geolocation file found inside it."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("A warning banner lists photos taken in landscape orientation, with a \"See more\" dialog. It can be turned off in Preferences (on by default)."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("A \"<folder>_stamped\" export folder is created next to the imported images and used automatically, or choose the destination each time. Toggle in Preferences (on by default)."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Export progress is now live: the terminal updates a single line on every photo instead of every ten, and the progress bar animates smoothly."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Folder scans run in the background: the title bar shows \"Scanning…\" with a pulsing progress bar, and exports show live \"Exporting… N%\" progress."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("New Additional Settings category in Preferences, and 2x thread oversubscription keeps CPUs busy during storage I/O wait."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Quality-of-life improvements across the app."));
     gtk_box_append(GTK_BOX(content), whats_new_heading("Fixes"));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Bug fixes and improvements."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("The config directory is created on first launch; missing or empty settings files no longer trigger warnings."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed Excel header parsing where shared-string headers were not resolved, leaving geolocation and time data unmapped."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed a crash when closing the Preferences dialog."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed a crash on startup in the settings loader."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Fixed settings and the selected preset being reset on startup."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Various bug fixes."));
 
     adw_dialog_present(dialog, GTK_WIDGET(self));
 }

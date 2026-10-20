@@ -35,6 +35,13 @@ static void apply_custom_css(void) {
         "banner#stampy_banner_dark > revealer > widget {"
         "  background-color: #e5a50a;"
         "  color: #1a1a1a;"
+        "}"
+        "banner#stampy_banner_red > revealer > widget {"
+        "  background-color: #c01c28;"
+        "  color: #ffffff;"
+        "}"
+        "banner#stampy_banner_red > revealer > widget button {"
+        "  color: #ffffff;"
         "}";
 
     gtk_css_provider_load_from_string(provider, css);
@@ -49,6 +56,8 @@ static void apply_custom_css(void) {
 static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(window);
     (void)user_data;
+
+    stampy_cancel_export(self);
 
     if (self->landscape_cancel) {
         g_cancellable_cancel(self->landscape_cancel);
@@ -68,6 +77,11 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
     if (self->populate_source_id > 0) {
         g_source_remove(self->populate_source_id);
         self->populate_source_id = 0;
+    }
+
+    if (self->save_state_timeout_id > 0) {
+        g_source_remove(self->save_state_timeout_id);
+        self->save_state_timeout_id = 0;
     }
 
     stampy_save_last_state(self);
@@ -145,6 +159,26 @@ static void stampy_window_dispose(GObject *object) {
         self->horizontal_photos = NULL;
     }
 
+    if (self->missing_data_items) {
+        g_ptr_array_unref(self->missing_data_items);
+        self->missing_data_items = NULL;
+    }
+
+    if (self->critical_coords_details) {
+        g_free(self->critical_coords_details);
+        self->critical_coords_details = NULL;
+    }
+
+    if (self->docx_cached_lines) {
+        g_strfreev(self->docx_cached_lines);
+        self->docx_cached_lines = NULL;
+    }
+
+    if (self->docx_cached_path) {
+        g_free(self->docx_cached_path);
+        self->docx_cached_path = NULL;
+    }
+
     if (self->default_export_folder) {
         g_object_unref(self->default_export_folder);
         self->default_export_folder = NULL;
@@ -165,6 +199,13 @@ static void stampy_window_dispose(GObject *object) {
         self->scan_cache_dirs = NULL;
     }
 
+    if (self->listbox_popover) {
+        gtk_widget_unparent(self->listbox_popover);
+        self->listbox_popover = NULL;
+    }
+
+    stampy_cancel_export(self);
+
     G_OBJECT_CLASS(stampy_window_parent_class)->dispose(object);
 }
 
@@ -179,6 +220,8 @@ static void stampy_window_class_init(StampyWindowClass *klass) {
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, toast_overlay);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, progress_bar);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_landscape);
+    gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_missing_data);
+    gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_critical_coords);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, left_stack);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, drop_area_frame);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, file_listbox);
@@ -254,6 +297,8 @@ static gboolean on_teto_bus(GstBus *bus, GstMessage *msg, gpointer user_data) {
     TetoPlayer *player = (TetoPlayer *)user_data;
     (void)bus;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wswitch-enum"
     switch (GST_MESSAGE_TYPE(msg)) {
     case GST_MESSAGE_ERROR: {
         GError *err = NULL;
@@ -278,6 +323,7 @@ static gboolean on_teto_bus(GstBus *bus, GstMessage *msg, gpointer user_data) {
     default:
         break;
     }
+#pragma GCC diagnostic pop
     return TRUE;
 }
 
@@ -355,8 +401,12 @@ static void update_banner_theme(StampyWindow *self) {
     if (!self || !self->banner_landscape || !manager) return;
 
     dark = adw_style_manager_get_dark(manager);
-    gtk_widget_set_name(self->banner_landscape,
-                        dark ? "stampy_banner_dark" : "stampy_banner_light");
+    if (self->banner_landscape)
+        gtk_widget_set_name(self->banner_landscape,
+                            dark ? "stampy_banner_dark" : "stampy_banner_light");
+    if (self->banner_missing_data)
+        gtk_widget_set_name(self->banner_missing_data,
+                            dark ? "stampy_banner_dark" : "stampy_banner_light");
 }
 
 static void on_style_dark_changed(GObject *object, GParamSpec *pspec, gpointer user_data) {
@@ -379,6 +429,8 @@ static void stampy_window_init(StampyWindow *self) {
 
     /* GtkBuilder ids are not CSS names; set a name the banner rules match. */
     update_banner_theme(self);
+    if (self->banner_critical_coords)
+        gtk_widget_set_name(self->banner_critical_coords, "stampy_banner_red");
     g_signal_connect_object(adw_style_manager_get_default(), "notify::dark",
                             G_CALLBACK(on_style_dark_changed), self, 0);
 

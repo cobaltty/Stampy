@@ -293,8 +293,8 @@ stampy_config_get_export_threads (void)
   stored = stampy_config_get_int (STAMPY_CONFIG_KEY_EXPORT_THREAD_COUNT, 0);
   if (stored < 1)
     return 1;
-  if (stored > n_cpus * 2)
-    return n_cpus * 2;
+  if (stored > n_cpus)
+    return n_cpus;
   return stored;
 }
 
@@ -305,8 +305,8 @@ stampy_config_set_export_threads (int value)
 
   if (value < 1)
     value = 1;
-  if (value > n_cpus * 2)
-    value = n_cpus * 2;
+  if (value > n_cpus)
+    value = n_cpus;
 
   stampy_config_set_int (STAMPY_CONFIG_KEY_EXPORT_THREAD_COUNT, value);
 }

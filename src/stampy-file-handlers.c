@@ -72,8 +72,9 @@ static int scan_excel_column_map(const char *xml_buf, GPtrArray *shared_strings,
         {
             char *v_start = strstr(cell_p, "<v>");
             if (v_start && v_start < row_end) {
+                char *v_end;
                 v_start += 3;
-                char *v_end = strstr(v_start, "</v>");
+                v_end = strstr(v_start, "</v>");
                 if (v_end && v_end < row_end) {
                     int v_len = v_end - v_start;
                     if (v_len > 0 && v_len < (int)sizeof(val_buf)) {
@@ -97,8 +98,9 @@ static int scan_excel_column_map(const char *xml_buf, GPtrArray *shared_strings,
         if (!header_text) {
             char *t_start = strstr(cell_p, "<t>");
             if (t_start && t_start < row_end) {
+                char *t_end;
                 t_start += 3;
-                char *t_end = strstr(t_start, "</t>");
+                t_end = strstr(t_start, "</t>");
                 if (t_end && t_end < row_end) {
                     int t_len = t_end - t_start;
                     if (t_len > 0 && t_len < (int)sizeof(val_buf)) {
@@ -124,19 +126,29 @@ static int scan_excel_column_map(const char *xml_buf, GPtrArray *shared_strings,
 
             if (g_strcmp0(clean, "no") == 0 || g_strcmp0(clean, "nopu") == 0 ||
                 g_strcmp0(clean, "nomor") == 0 || g_strcmp0(clean, "id") == 0 ||
-                g_strcmp0(clean, "number") == 0) {
+                g_strcmp0(clean, "number") == 0 || g_strcmp0(clean, "pu") == 0 ||
+                g_strcmp0(clean, "kodepu") == 0 || g_strcmp0(clean, "idfoto") == 0 ||
+                g_strcmp0(clean, "photoid") == 0) {
                 field_type = 0; /* ID */
             } else if (g_strcmp0(clean, "x") == 0 || strstr(clean, "long") != NULL ||
-                       strstr(clean, "bujur") != NULL || g_str_has_prefix(clean, "x")) {
+                       strstr(clean, "bujur") != NULL || strstr(clean, "east") != NULL ||
+                       g_str_has_prefix(clean, "x")) {
                 field_type = 1; /* Longitude */
             } else if (g_strcmp0(clean, "y") == 0 || strstr(clean, "lat") != NULL ||
-                       strstr(clean, "lintang") != NULL || g_str_has_prefix(clean, "y")) {
+                       strstr(clean, "lintang") != NULL || strstr(clean, "north") != NULL ||
+                       g_str_has_prefix(clean, "y")) {
                 field_type = 2; /* Latitude */
-            } else if (strstr(clean, "azh") != NULL || strstr(clean, "azim") != NULL ||
-                       strstr(clean, "arah") != NULL || strstr(clean, "head") != NULL) {
+            } else if (strstr(clean, "azm") != NULL || strstr(clean, "azh") != NULL ||
+                       strstr(clean, "azim") != NULL || strstr(clean, "bearing") != NULL ||
+                       strstr(clean, "arah") != NULL || strstr(clean, "sudut") != NULL ||
+                       strstr(clean, "kompas") != NULL || strstr(clean, "compass") != NULL ||
+                       strstr(clean, "head") != NULL || strstr(clean, "derajat") != NULL ||
+                       g_strcmp0(clean, "deg") == 0 || g_strcmp0(clean, "degree") == 0 ||
+                       g_strcmp0(clean, "degrees") == 0 || g_str_has_prefix(clean, "deg")) {
                 field_type = 3; /* Azimuth */
             } else if (strstr(clean, "jam") != NULL || strstr(clean, "time") != NULL ||
-                       strstr(clean, "waktu") != NULL) {
+                       strstr(clean, "waktu") != NULL || strstr(clean, "clock") != NULL ||
+                       strstr(clean, "pukul") != NULL) {
                 field_type = 4; /* Time */
             }
 
@@ -336,6 +348,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
             ColMap col_map;
             gboolean has_map_lon = FALSE;
             gboolean has_map_lat = FALSE;
+            gboolean has_map_azh = FALSE;
             char *row_p;
             int k;
 
@@ -344,9 +357,49 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
             for (k = 0; k < col_map.count; k++) {
                 if (col_map.entries[k].field_type == 1) has_map_lon = TRUE;
                 if (col_map.entries[k].field_type == 2) has_map_lat = TRUE;
+                if (col_map.entries[k].field_type == 3) has_map_azh = TRUE;
             }
 
-            if (!has_map_lon || !has_map_lat) {
+            if (!has_map_lon || !has_map_lat || !has_map_azh) {
+                GString *missing_cols = g_string_new("");
+                gboolean first_m = TRUE;
+                char *b_title;
+                char *f_base;
+
+                if (!has_map_lon) {
+                    g_string_append(missing_cols, "X");
+                    first_m = FALSE;
+                }
+                if (!has_map_lat) {
+                    if (!first_m) g_string_append(missing_cols, ", ");
+                    g_string_append(missing_cols, "Y");
+                    first_m = FALSE;
+                }
+                if (!has_map_azh) {
+                    if (!first_m) g_string_append(missing_cols, ", ");
+                    g_string_append(missing_cols, "Azimuth");
+                }
+
+                b_title = g_strdup_printf("Critical: Missing coordinates (%s not detected)", missing_cols->str);
+                if (self->banner_critical_coords) {
+                    adw_banner_set_title(ADW_BANNER(self->banner_critical_coords), b_title);
+                    adw_banner_set_revealed(ADW_BANNER(self->banner_critical_coords), TRUE);
+                }
+                g_free(b_title);
+
+                f_base = g_file_get_basename(file);
+                g_free(self->critical_coords_details);
+                self->critical_coords_details = g_strdup_printf(
+                    "Auto-parsing could not detect required column(s) in '%s':\n\n"
+                    "• Missing: %s\n\n"
+                    "Please ensure the spreadsheet header contains recognized column names:\n"
+                    "• X (or Longitude)\n"
+                    "• Y (or Latitude)\n"
+                    "• Azimuth (or AZM, Azh, Arah, Bearing, Sudut)",
+                    f_base ? f_base : "Excel", missing_cols->str);
+                g_free(f_base);
+                g_string_free(missing_cols, TRUE);
+
                 /* Safe default fallback if auto-detection misses coordinates */
                 col_map.count = 0;
                 col_map.entries[0] = (ColMapEntry){'A', 0};
@@ -356,6 +409,25 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                 col_map.entries[4] = (ColMapEntry){'E', 4};
                 col_map.entries[5] = (ColMapEntry){'F', 4};
                 col_map.count = 6;
+                stampy_append_log(self, "[INFO] Using default column mapping: A=ID B=X C=Y D=Azimuth");
+            } else {
+                const char *f_names[] = {"ID", "Lon", "Lat", "Azimuth", "Time"};
+                GString *map_str = g_string_new("[INFO] Excel columns mapped: ");
+
+                if (self->banner_critical_coords) {
+                    adw_banner_set_revealed(ADW_BANNER(self->banner_critical_coords), FALSE);
+                }
+                g_clear_pointer(&self->critical_coords_details, g_free);
+
+                for (k = 0; k < col_map.count; k++) {
+                    int ft = col_map.entries[k].field_type;
+                    if (ft >= 0 && ft <= 4) {
+                        g_string_append_printf(map_str, "%c=%s ",
+                                               col_map.entries[k].col_letter, f_names[ft]);
+                    }
+                }
+                stampy_append_log(self, map_str->str);
+                g_string_free(map_str, TRUE);
             }
 
             row_p = xml_buf->str;
@@ -367,7 +439,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                 double current_lat = 0.0;
                 double current_azimuth = 0.0;
                 double current_time = 0.0;
-                gboolean has_id = FALSE, has_lon = FALSE, has_lat = FALSE, has_time = FALSE;
+                gboolean has_id = FALSE, has_lon = FALSE, has_lat = FALSE;
                 char *cell_p;
 
                 if (!row_end) break;
@@ -451,7 +523,6 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                                     current_azimuth = val;
                                 } else if (field_type == 4) {
                                     current_time = val;
-                                    has_time = TRUE;
                                 }
                             }
                         }
@@ -949,8 +1020,10 @@ static gboolean on_docx_drop(GtkDropTarget *target, const GValue *value, double 
 
                     stampy_show_toast(self, "Watermark DOCX set!");
                     stampy_append_log(self, "[INFO] Watermark file updated via Drag & Drop.");
+                    stampy_invalidate_docx_cache(self);
                     stampy_render_live_preview(self);
                     stampy_update_clear_button_visibility(self);
+                    stampy_check_missing_data(self);
                     g_free(path);
                     g_slist_free(files);
                     return TRUE;
@@ -995,6 +1068,7 @@ static gboolean on_xlsx_drop(GtkDropTarget *target, const GValue *value, double 
                     stampy_append_log(self, "[INFO] Geolocation file loaded via Drag & Drop.");
                     stampy_render_live_preview(self);
                     stampy_update_clear_button_visibility(self);
+                    stampy_check_missing_data(self);
                     g_free(path);
                     g_slist_free(files);
                     return TRUE;
@@ -1103,8 +1177,10 @@ static void on_docx_file_opened(GObject *source, GAsyncResult *res, gpointer use
         g_free(basename);
 
         stampy_show_toast(self, "Watermark file selected!");
+        stampy_invalidate_docx_cache(self);
         stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
+        stampy_check_missing_data(self);
     }
 }
 
@@ -1145,6 +1221,7 @@ static void on_xlsx_file_opened(GObject *source, GAsyncResult *res, gpointer use
         stampy_show_toast(self, "Geolocation XLSX selected!");
         stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
+        stampy_check_missing_data(self);
     }
 }
 
@@ -1176,6 +1253,16 @@ void stampy_setup_file_handlers_and_dnd(StampyWindow *self) {
     if (self->banner_landscape) {
         g_signal_connect(self->banner_landscape, "button-clicked",
                          G_CALLBACK(stampy_on_landscape_banner_clicked), self);
+    }
+
+    if (self->banner_missing_data) {
+        g_signal_connect(self->banner_missing_data, "button-clicked",
+                         G_CALLBACK(stampy_on_missing_data_banner_clicked), self);
+    }
+
+    if (self->banner_critical_coords) {
+        g_signal_connect(self->banner_critical_coords, "button-clicked",
+                         G_CALLBACK(stampy_on_critical_coords_banner_clicked), self);
     }
 
     if (self->file_listbox) {

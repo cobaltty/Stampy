@@ -45,6 +45,16 @@
   </screenshots>
 
   <releases>
+    <release version="1.921.beta" date="2026-10-20">
+      <description>
+        <p>Increments support, quality-of-life improvements, and bug fixes.</p>
+        <ul>
+          <li>Added increments support.</li>
+          <li>Quality-of-life improvements across the app.</li>
+          <li>Various bug fixes.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.833.beta" date="2026-10-19">
       <description>
         <p>Bug fixes and improvements.</p>

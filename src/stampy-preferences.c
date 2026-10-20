@@ -39,6 +39,12 @@ set_jpeg_quality_value (int value)
 static int
 get_thread_count_value (void)
 {
+  if (stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_USE_ALL_CORES, TRUE))
+    {
+      int n_cpus = g_get_num_processors ();
+      return n_cpus < 1 ? 1 : n_cpus;
+    }
+
   return stampy_config_get_export_threads ();
 }
 
@@ -366,10 +372,10 @@ stampy_show_preferences (StampyWindow *self)
   /* Worker threads row */
   threads_row = add_int_slider_row (perf_group,
                                     "Worker threads",
-                                    "Number of images processed at the same time. "
-                                    "Fewer threads leave headroom for other apps.",
+                                    "Base worker threads (one per CPU core). "
+                                    "Oversubscription doubles this when enabled.",
                                     2,
-                                    1, n_cpus * 2,
+                                    1, n_cpus,
                                     "worker threads", NULL,
                                     get_thread_count_value, set_thread_count_value);
   gtk_widget_set_sensitive (threads_row, !use_all);

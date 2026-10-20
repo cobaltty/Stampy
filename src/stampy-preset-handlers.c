@@ -85,7 +85,7 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
     GError *error = NULL;
     GdkRGBA rgba;
     guint c_idx, t_idx;
-    int t_spacing = 12;
+    double t_spacing = 12.0;
 
     if (!self || !filepath) return;
 
@@ -115,7 +115,7 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
     else if (self->btn_t_align_center && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_t_align_center))) t_align = "center";
 
     if (self->val_text_spacing) {
-        t_spacing = (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_text_spacing));
+        t_spacing = gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_text_spacing));
     }
 
 #pragma GCC diagnostic push
@@ -132,23 +132,23 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
 
     json_data = g_strdup_printf(
         "{\n"
-        "  \"c_size\": %d,\n  \"c_margin_x\": %d,\n  \"c_margin_y\": %d,\n  \"c_opacity\": %d,\n  \"c_pos\": \"%s\",\n"
+        "  \"c_size\": %d,\n  \"c_margin_x\": %.1f,\n  \"c_margin_y\": %.1f,\n  \"c_opacity\": %d,\n  \"c_pos\": \"%s\",\n"
         "  \"c_shadow\": %s,\n  \"c_stroke\": %s,\n  \"c_stroke_color\": \"%s\",\n"
-        "  \"t_size\": %d,\n  \"t_spacing\": %d,\n  \"t_margin_x\": %d,\n  \"t_margin_y\": %d,\n  \"t_opacity\": %d,\n  \"t_pos\": \"%s\",\n"
+        "  \"t_size\": %.1f,\n  \"t_spacing\": %.1f,\n  \"t_margin_x\": %.1f,\n  \"t_margin_y\": %.1f,\n  \"t_opacity\": %d,\n  \"t_pos\": \"%s\",\n"
         "  \"t_font\": \"%s\",\n  \"t_align\": \"%s\",\n"
         "  \"t_bold\": %s,\n  \"t_italic\": %s,\n  \"t_underline\": %s,\n"
         "  \"t_shadow\": %s,\n  \"t_stroke\": %s,\n  \"t_stroke_color\": \"%s\",\n  \"t_color\": \"%s\",\n  \"metadata_inject\": %s,\n  \"xlsx_time_exif\": %s\n}\n",
         (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_size)),
-        (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_margin_x)),
-        (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_margin_y)),
+        gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_margin_x)),
+        gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_margin_y)),
         (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_opacity)), c_pos,
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_c_shadow)) ? "true" : "false",
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_c_stroke)) ? "true" : "false",
         color_hex_c_stroke,
-        (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_text_size)),
+        gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_text_size)),
         t_spacing,
-        (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_text_margin_x)),
-        (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_text_margin_y)),
+        gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_text_margin_x)),
+        gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_text_margin_y)),
         (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_text_opacity)), t_pos,
         t_font, t_align,
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_t_bold)) ? "true" : "false",
@@ -173,8 +173,11 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
 void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
     g_autofree char *content = NULL;
     gsize length = 0;
-    int c_size = 140, c_margin_x = 20, c_margin_y = 20, c_opacity = 77;
-    int t_size = 29, t_margin_x = 20, t_margin_y = 20, t_opacity = 100, t_spacing = 12;
+    int c_size = 140, c_opacity = 77;
+    double c_margin_x = 20.0, c_margin_y = 20.0;
+    double t_size = 29.0, t_margin_x = 20.0, t_margin_y = 20.0;
+    double t_spacing = 12.0;
+    int t_opacity = 100;
     char hex[10];
     GdkRGBA rgba;
 
@@ -187,33 +190,27 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
     if (strstr(content, "\"c_opacity\":")) sscanf(strstr(content, "\"c_opacity\":"), "\"c_opacity\": %d", &c_opacity);
     else if (strstr(content, "\"opacity_percent\":")) sscanf(strstr(content, "\"opacity_percent\":"), "\"opacity_percent\": %d", &c_opacity);
 
-    if (strstr(content, "\"c_margin_x\":")) sscanf(strstr(content, "\"c_margin_x\":"), "\"c_margin_x\": %d", &c_margin_x);
-    if (strstr(content, "\"c_margin_y\":")) sscanf(strstr(content, "\"c_margin_y\":"), "\"c_margin_y\": %d", &c_margin_y);
+    if (strstr(content, "\"c_margin_x\":")) sscanf(strstr(content, "\"c_margin_x\":"), "\"c_margin_x\": %lf", &c_margin_x);
+    if (strstr(content, "\"c_margin_y\":")) sscanf(strstr(content, "\"c_margin_y\":"), "\"c_margin_y\": %lf", &c_margin_y);
 
     /* Text size, margins, and spacing. */
-    if (strstr(content, "\"t_size\":")) sscanf(strstr(content, "\"t_size\":"), "\"t_size\": %d", &t_size);
+    if (strstr(content, "\"t_size\":")) sscanf(strstr(content, "\"t_size\":"), "\"t_size\": %lf", &t_size);
     else if (strstr(content, "\"font_size\":")) {
-        double f_sz = 29.0;
-        sscanf(strstr(content, "\"font_size\":"), "\"font_size\": %lf", &f_sz);
-        t_size = (int)f_sz;
+        sscanf(strstr(content, "\"font_size\":"), "\"font_size\": %lf", &t_size);
     }
 
-    if (strstr(content, "\"t_spacing\":")) sscanf(strstr(content, "\"t_spacing\":"), "\"t_spacing\": %d", &t_spacing);
+    if (strstr(content, "\"t_spacing\":")) sscanf(strstr(content, "\"t_spacing\":"), "\"t_spacing\": %lf", &t_spacing);
 
     if (strstr(content, "\"t_opacity\":")) sscanf(strstr(content, "\"t_opacity\":"), "\"t_opacity\": %d", &t_opacity);
 
-    if (strstr(content, "\"t_margin_x\":")) sscanf(strstr(content, "\"t_margin_x\":"), "\"t_margin_x\": %d", &t_margin_x);
+    if (strstr(content, "\"t_margin_x\":")) sscanf(strstr(content, "\"t_margin_x\":"), "\"t_margin_x\": %lf", &t_margin_x);
     else if (strstr(content, "\"margin_x\":")) {
-        double m_x = 20.0;
-        sscanf(strstr(content, "\"margin_x\":"), "\"margin_x\": %lf", &m_x);
-        t_margin_x = (int)m_x;
+        sscanf(strstr(content, "\"margin_x\":"), "\"margin_x\": %lf", &t_margin_x);
     }
 
-    if (strstr(content, "\"t_margin_y\":")) sscanf(strstr(content, "\"t_margin_y\":"), "\"t_margin_y\": %d", &t_margin_y);
+    if (strstr(content, "\"t_margin_y\":")) sscanf(strstr(content, "\"t_margin_y\":"), "\"t_margin_y\": %lf", &t_margin_y);
     else if (strstr(content, "\"margin_y\":")) {
-        double m_y = 20.0;
-        sscanf(strstr(content, "\"margin_y\":"), "\"margin_y\": %lf", &m_y);
-        t_margin_y = (int)m_y;
+        sscanf(strstr(content, "\"margin_y\":"), "\"margin_y\": %lf", &t_margin_y);
     }
 
     /* Compass and text position dropdowns. */
@@ -354,11 +351,13 @@ void stampy_save_last_state(StampyWindow *self) {
     if (g_file_get_contents(path, &json_data, NULL, &error)) {
         char *last_brace = g_strrstr(json_data, "}");
         if (last_brace) {
+            char *extended;
             *last_brace = '\0';
-            g_autofree char *extended = g_strdup_printf(
+            extended = g_strdup_printf(
                 "%s,\n  \"last_preset\": \"%s\"\n}\n",
                 json_data, preset_name ? preset_name : "");
             g_file_set_contents(path, extended, -1, &error);
+            g_free(extended);
         }
         g_free(json_data);
     }

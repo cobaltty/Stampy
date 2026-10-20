@@ -102,6 +102,12 @@ struct _StampyWindow {
     GPtrArray *horizontal_photos;
     GCancellable *landscape_cancel;
     guint landscape_generation;
+    GtkWidget *banner_missing_data;
+    GPtrArray *missing_data_items;
+    GtkWidget *banner_critical_coords;
+    char *critical_coords_details;
+    char *docx_cached_path;
+    char **docx_cached_lines;
     GCancellable *scan_cancel;
     guint scan_pulse_id;
     guint scan_generation;
@@ -112,6 +118,7 @@ struct _StampyWindow {
     GFile *import_root;
     GPtrArray *scan_cache_sources;
     GHashTable *scan_cache_dirs;
+    GtkWidget *listbox_popover;
     gboolean has_active_status_line;
 };
 
@@ -140,6 +147,10 @@ void stampy_add_file_or_directory(StampyWindow *self, GFile *file, int *added_co
 void stampy_append_log(StampyWindow *self, const char *message);
 void stampy_update_status_line(StampyWindow *self, const char *message);
 void stampy_check_horizontal_photos(StampyWindow *self);
+void stampy_check_missing_data(StampyWindow *self);
+void stampy_on_missing_data_banner_clicked(AdwBanner *banner, gpointer user_data);
+void stampy_on_critical_coords_banner_clicked(AdwBanner *banner, gpointer user_data);
+void stampy_invalidate_docx_cache(StampyWindow *self);
 void stampy_auto_detect_companion_files(StampyWindow *self, GSList *files);
 void stampy_prepare_default_export_folder(StampyWindow *self);
 void stampy_set_import_root(StampyWindow *self, GFile *file);

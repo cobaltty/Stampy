@@ -13,15 +13,15 @@ typedef struct {
     gboolean has_compass;
     int comp_w;
     double comp_opacity;
-    int comp_margin_x;
-    int comp_margin_y;
+    double comp_margin_x;
+    double comp_margin_y;
     guint comp_pos_idx;
     gboolean comp_shadow;
 
     double font_size;
     double text_opacity;
-    int text_margin_x;
-    int text_margin_y;
+    double text_margin_x;
+    double text_margin_y;
     guint text_pos_idx;
     int text_align;
     double line_spacing;
@@ -64,6 +64,11 @@ typedef struct {
     ExportSettingsSnapshot snapshot;
     guint total;
     volatile gint completed;   /* atomic progress counter */
+    volatile gint success_count;
+    volatile gint error_count;
+    volatile gint warn_gps_missing;
+    volatile gint warn_wm_missing;
+    volatile gint warn_id_missing;
     FILE *argfile_fp;
     GMutex argfile_mutex;
     char *argfile_path;
@@ -342,8 +347,8 @@ static void snapshot_export_settings(StampyWindow *window_self, ExportSettingsSn
         snap->has_compass = TRUE;
         snap->comp_w = (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_compass_size));
         snap->comp_opacity = gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_compass_opacity)) / 100.0;
-        snap->comp_margin_x = (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_compass_margin_x));
-        snap->comp_margin_y = (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_compass_margin_y));
+        snap->comp_margin_x = gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_compass_margin_x));
+        snap->comp_margin_y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_compass_margin_y));
         snap->comp_pos_idx = gtk_drop_down_get_selected(GTK_DROP_DOWN(window_self->drop_compass_pos));
         snap->comp_shadow = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(window_self->btn_c_shadow));
     }
@@ -361,8 +366,8 @@ static void snapshot_export_settings(StampyWindow *window_self, ExportSettingsSn
 
         snap->font_size = gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_text_size));
         snap->text_opacity = gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_text_opacity)) / 100.0;
-        snap->text_margin_x = (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_text_margin_x));
-        snap->text_margin_y = (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_text_margin_y));
+        snap->text_margin_x = gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_text_margin_x));
+        snap->text_margin_y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_text_margin_y));
         snap->text_pos_idx = gtk_drop_down_get_selected(GTK_DROP_DOWN(window_self->drop_text_pos));
 
         if (window_self->val_text_spacing) {
@@ -1048,6 +1053,8 @@ static void export_image_worker(gpointer data, gpointer user_data) {
         if (window_self->file_watermark) {
             if (stampy_lookup_docx_data(window_self, orig_basename, &custom_text, &azimuth_str)) {
                 remove_image_marker_from_text(&custom_text, photo_id);
+            } else {
+                g_atomic_int_add(&ctx->warn_wm_missing, 1);
             }
         }
 
@@ -1060,8 +1067,12 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                 clean_heading_val = compass_deg;
                 if (!custom_text) custom_text = g_strdup_printf("%s %s", lat_str, lon_str);
                 if (!azimuth_str) azimuth_str = g_strdup_printf("%.2f", compass_deg);
+            } else {
+                g_atomic_int_add(&ctx->warn_gps_missing, 1);
             }
         }
+    } else {
+        g_atomic_int_add(&ctx->warn_id_missing, 1);
     }
 
     stamped = render_stamped_pixbuf_from_snapshot(file, &ctx->snapshot, custom_text, azimuth_str, (CompassIndex *)ctx->compass_idx);
@@ -1092,6 +1103,8 @@ static void export_image_worker(gpointer data, gpointer user_data) {
             char iptc_time_common[32] = {0};
             GExiv2Metadata *native_meta = NULL;
             GError *native_gex_err = NULL;
+
+            g_atomic_int_add(&ctx->success_count, 1);
 
             if (ctx->snapshot.use_native_metadata) {
                 native_meta = stampy_gexiv2_open_source(src_path, &native_gex_err);
@@ -1432,7 +1445,9 @@ static void export_image_worker(gpointer data, gpointer user_data) {
             g_free(docx_date);
             g_free(src_path);
         } else {
-            char *emsg = g_strdup_printf("[ERROR] Failed saving: %s (%s)", orig_basename, error ? error->message : "Unknown");
+            char *emsg;
+            g_atomic_int_add(&ctx->error_count, 1);
+            emsg = g_strdup_printf("[ERROR] Failed saving: %s (%s)", orig_basename, error ? error->message : "Unknown");
             send_progress_to_ui(window_self, 0.0, FALSE, emsg, FALSE, FALSE);
             g_free(emsg);
             if (error) g_error_free(error);
@@ -1440,7 +1455,9 @@ static void export_image_worker(gpointer data, gpointer user_data) {
 
         g_object_unref(stamped);
     } else {
-        char *emsg = g_strdup_printf("[ERROR] Failed rendering: %s", orig_basename);
+        char *emsg;
+        g_atomic_int_add(&ctx->error_count, 1);
+        emsg = g_strdup_printf("[ERROR] Failed rendering: %s", orig_basename);
         send_progress_to_ui(window_self, 0.0, FALSE, emsg, FALSE, FALSE);
         g_free(emsg);
     }
@@ -1463,13 +1480,22 @@ static void export_image_worker(gpointer data, gpointer user_data) {
 /* Releases the sleep inhibitor and notifies on completion (main thread). */
 typedef struct {
     GtkApplication *app;
+    StampyWindow *self;
     guint cookie;
     guint total;
     guint completed;
+    guint success;
+    guint errors;
+    guint warn_gps;
+    guint warn_wm;
+    guint warn_id;
 } ExportFinishData;
 
 static gboolean on_export_finished_idle(gpointer user_data) {
     ExportFinishData *data = (ExportFinishData *)user_data;
+    char *heading;
+    GString *body;
+    AdwDialog *alert;
 
     /* Release the sleep inhibitor. */
     if (data->app && data->cookie > 0) {
@@ -1479,12 +1505,45 @@ static gboolean on_export_finished_idle(gpointer user_data) {
     /* Desktop notification. */
     if (data->app) {
         GNotification *notif = g_notification_new("Stampy Export Complete");
-        char *body = g_strdup_printf("All %u photos have been exported successfully!", data->completed);
-        g_notification_set_body(notif, body);
+        char *notif_body = g_strdup_printf("%u photos exported successfully.", data->success);
+        g_notification_set_body(notif, notif_body);
         g_notification_set_priority(notif, G_NOTIFICATION_PRIORITY_NORMAL);
         g_application_send_notification(G_APPLICATION(data->app), "export-complete", notif);
-        g_free(body);
+        g_free(notif_body);
         g_object_unref(notif);
+    }
+
+    /* Dialog showing post-export summary */
+    if (data->self) {
+        body = g_string_new("");
+
+        if (data->errors == 0 && data->warn_gps == 0 && data->warn_wm == 0 && data->warn_id == 0) {
+            heading = g_strdup("Export Finished Successfully");
+            g_string_append_printf(body, "All %u photos were exported successfully with complete metadata.", data->total);
+        } else {
+            heading = g_strdup_printf("Export Finished (%u Photos)", data->total);
+            g_string_append_printf(body, "• Successful: %u\n", data->success);
+            if (data->warn_gps > 0 || data->warn_wm > 0 || data->warn_id > 0) {
+                g_string_append(body, "\n• Warnings:\n");
+                if (data->warn_gps > 0)
+                    g_string_append_printf(body, "   - Missing GPS coordinates: %u\n", data->warn_gps);
+                if (data->warn_wm > 0)
+                    g_string_append_printf(body, "   - Missing Watermark text: %u\n", data->warn_wm);
+                if (data->warn_id > 0)
+                    g_string_append_printf(body, "   - Missing Image Code/ID: %u\n", data->warn_id);
+            }
+            if (data->errors > 0) {
+                g_string_append_printf(body, "\n• Errors:\n   - Failed to render/save: %u\n", data->errors);
+            }
+        }
+
+        alert = adw_alert_dialog_new(heading, body->str);
+        adw_alert_dialog_add_response(ADW_ALERT_DIALOG(alert), "ok", "OK");
+        adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "ok");
+        adw_dialog_present(alert, GTK_WIDGET(data->self));
+
+        g_free(heading);
+        g_string_free(body, TRUE);
     }
 
     g_object_unref(data->app);
@@ -1499,6 +1558,7 @@ static gpointer export_worker_thread(gpointer user_data) {
     guint total;
     guint i;
     char *msg;
+    int success = 0, errors = 0, warn_gps = 0, warn_wm = 0, warn_id = 0;
 
     td = (ExportThreadData *)user_data;
     if (!td || !td->self) return NULL;
@@ -1521,11 +1581,19 @@ static gpointer export_worker_thread(gpointer user_data) {
         ExportWorkerContext ctx;
         GThreadPool *pool;
         gint max_threads = stampy_config_get_export_threads();
+        int n_cpus = g_get_num_processors();
         GError *pool_err = NULL;
         ExportWorkItem *item;
 
-        msg = g_strdup_printf("[INFO] Starting parallel export of %u items (%d worker thread%s)...",
-                              total, max_threads, max_threads == 1 ? "" : "s");
+        if (n_cpus < 1) n_cpus = 1;
+
+        if (max_threads > n_cpus) {
+            msg = g_strdup_printf("[INFO] Starting parallel export of %u items (using %d worker threads across %d CPU cores)...",
+                                  total, max_threads, n_cpus);
+        } else {
+            msg = g_strdup_printf("[INFO] Starting parallel export of %u items (using %d worker threads on %d CPU cores)...",
+                                  total, max_threads, n_cpus);
+        }
         send_progress_to_ui(window_self, 0.0, TRUE, msg, FALSE, FALSE);
         g_free(msg);
 
@@ -1534,6 +1602,11 @@ static gpointer export_worker_thread(gpointer user_data) {
         ctx.snapshot = td->snapshot;  /* read-only during export */
         ctx.total = total;
         ctx.completed = 0;
+        ctx.success_count = 0;
+        ctx.error_count = 0;
+        ctx.warn_gps_missing = 0;
+        ctx.warn_wm_missing = 0;
+        ctx.warn_id_missing = 0;
         ctx.argfile_fp = NULL;
         ctx.argfile_path = NULL;
         ctx.compass_idx = NULL;
@@ -1621,12 +1694,35 @@ static gpointer export_worker_thread(gpointer user_data) {
             ctx.argfile_path = NULL;
         }
         g_mutex_clear(&ctx.argfile_mutex);
+
+        success = g_atomic_int_get(&ctx.success_count);
+        errors = g_atomic_int_get(&ctx.error_count);
+        warn_gps = g_atomic_int_get(&ctx.warn_gps_missing);
+        warn_wm = g_atomic_int_get(&ctx.warn_wm_missing);
+        warn_id = g_atomic_int_get(&ctx.warn_id_missing);
     }
 
     send_progress_to_ui(window_self, 1.0, FALSE, "Export Finished!", TRUE, TRUE);
-    msg = g_strdup_printf("[INFO] All %u photos processed.", total);
-    send_progress_to_ui(window_self, 1.0, FALSE, msg, FALSE, TRUE);
-    g_free(msg);
+
+    /* Post-export terminal summary */
+    {
+        GString *summary = g_string_new("[INFO] ========================================\n");
+        g_string_append_printf(summary, "[INFO] Export Summary (%u total):\n", total);
+        g_string_append_printf(summary, "[INFO]   ✓ Successfully exported: %d\n", success);
+        if (warn_gps > 0)
+            g_string_append_printf(summary, "[WARN]   ⚠ Missing GPS: %d\n", warn_gps);
+        if (warn_wm > 0)
+            g_string_append_printf(summary, "[WARN]   ⚠ Missing Watermark: %d\n", warn_wm);
+        if (warn_id > 0)
+            g_string_append_printf(summary, "[WARN]   ⚠ Missing Image Code/ID: %d\n", warn_id);
+        if (errors > 0)
+            g_string_append_printf(summary, "[ERROR]  ✗ Errors (failed saving): %d\n", errors);
+        else
+            g_string_append(summary, "[INFO]   ✓ Errors: 0\n");
+        g_string_append(summary, "[INFO] ========================================");
+        send_progress_to_ui(window_self, 1.0, FALSE, summary->str, FALSE, TRUE);
+        g_string_free(summary, TRUE);
+    }
 
     /* The snapshot was copied into ctx; td->snapshot is still ours to free. */
     free_export_snapshot(&td->snapshot);
@@ -1637,9 +1733,15 @@ static gpointer export_worker_thread(gpointer user_data) {
         if (app) {
             ExportFinishData *finish = g_new0(ExportFinishData, 1);
             finish->app = g_object_ref(app);
+            finish->self = window_self;
             finish->cookie = td->inhibit_cookie;
             finish->completed = total;
             finish->total = total;
+            finish->success = success;
+            finish->errors = errors;
+            finish->warn_gps = warn_gps;
+            finish->warn_wm = warn_wm;
+            finish->warn_id = warn_id;
             g_idle_add(on_export_finished_idle, finish);
         }
     }
