@@ -654,13 +654,18 @@ void stampy_render_live_preview(StampyWindow *window_self) {
 
     selected_rows = gtk_list_box_get_selected_rows(GTK_LIST_BOX(window_self->file_listbox));
     if (g_list_length(selected_rows) == 1) {
-        int idx = gtk_list_box_row_get_index(GTK_LIST_BOX_ROW(selected_rows->data));
-        if (idx >= 0 && idx < (int)window_self->image_files->len) {
-            GFile *file = g_ptr_array_index(window_self->image_files, idx);
-            if (file) {
+        GtkListBoxRow *row = GTK_LIST_BOX_ROW(selected_rows->data);
+        GFile *file = G_FILE(g_object_get_data(G_OBJECT(row), "file"));
+        if (!file) {
+            int idx = gtk_list_box_row_get_index(row);
+            if (idx >= 0 && idx < (int)window_self->image_files->len)
+                file = g_ptr_array_index(window_self->image_files, idx);
+        }
+        if (file) {
                 GdkPixbuf *stamped = NULL;
                 char *orig_basename = g_file_get_basename(file);
                 char *file_path = g_file_get_path(file);
+                char *pu_code = stampy_get_pu_code_for_file(file);
                 char *custom_text = NULL;
                 char *azimuth_str = NULL;
 
@@ -686,14 +691,14 @@ void stampy_render_live_preview(StampyWindow *window_self) {
                     int photo_id = extract_id_from_filename(orig_basename);
 
                     if (window_self->file_watermark) {
-                        if (stampy_lookup_docx_data(window_self, orig_basename, &custom_text, &azimuth_str)) {
+                        if (stampy_lookup_docx_data(window_self, pu_code, orig_basename, &custom_text, &azimuth_str)) {
                             remove_image_marker_from_text(&custom_text, photo_id);
                         }
                     }
 
                     if (photo_id > 0 && window_self->file_geolocation && window_self->geo_table) {
                         GeolocationEntry geo_entry;
-                        if (stampy_lookup_geolocation_data(window_self, photo_id, &geo_entry)) {
+                        if (stampy_lookup_geolocation_data(window_self, pu_code, photo_id, &geo_entry)) {
                             char lat_str[32], lon_str[32];
                             double compass_deg = 0.0;
                             format_geolocation_text(&geo_entry, lat_str, lon_str, &compass_deg);
@@ -722,10 +727,10 @@ void stampy_render_live_preview(StampyWindow *window_self) {
                 }
                 free_export_snapshot(&snap);
                 g_free(orig_basename);
+                g_free(pu_code);
                 g_free(custom_text);
                 g_free(azimuth_str);
             }
-        }
     }
     g_list_free(selected_rows);
 }
@@ -1021,6 +1026,8 @@ static void export_image_worker(gpointer data, gpointer user_data) {
 
     GFile *file;
     char *orig_basename = NULL;
+    char *pu_code = NULL;
+    char *out_dir = NULL;
     char *out_path = NULL;
     GeolocationEntry geo_entry;
     gboolean has_geo = FALSE;
@@ -1046,12 +1053,28 @@ static void export_image_worker(gpointer data, gpointer user_data) {
         return;
     }
 
-    out_path = g_build_filename(ctx->folder_path, orig_basename, NULL);
+    /* Mirror the input PU subfolder structure so same-numbered files from
+     * different groups and subfolders never overwrite each other. */
+    pu_code = stampy_get_pu_code_for_file(file);
+    {
+        char *rel_subpath = stampy_get_pu_rel_subpath_for_file(file);
+        if (rel_subpath && *rel_subpath != '\0') {
+            out_dir = g_build_filename(ctx->folder_path, rel_subpath, NULL);
+        } else if (pu_code && *pu_code != '\0') {
+            out_dir = g_build_filename(ctx->folder_path, pu_code, NULL);
+        } else {
+            out_dir = g_strdup(ctx->folder_path);
+        }
+        g_free(rel_subpath);
+    }
+    g_mkdir_with_parents(out_dir, 0755);
+    out_path = g_build_filename(out_dir, orig_basename, NULL);
+
     photo_id = extract_id_from_filename(orig_basename);
 
     if (photo_id > 0) {
         if (window_self->file_watermark) {
-            if (stampy_lookup_docx_data(window_self, orig_basename, &custom_text, &azimuth_str)) {
+            if (stampy_lookup_docx_data(window_self, pu_code, orig_basename, &custom_text, &azimuth_str)) {
                 remove_image_marker_from_text(&custom_text, photo_id);
             } else {
                 g_atomic_int_add(&ctx->warn_wm_missing, 1);
@@ -1059,7 +1082,7 @@ static void export_image_worker(gpointer data, gpointer user_data) {
         }
 
         if (window_self->file_geolocation && window_self->geo_table) {
-            has_geo = stampy_lookup_geolocation_data(window_self, photo_id, &geo_entry);
+            has_geo = stampy_lookup_geolocation_data(window_self, pu_code, photo_id, &geo_entry);
             if (has_geo) {
                 char lat_str[32], lon_str[32];
                 double compass_deg = 0.0;
@@ -1465,6 +1488,8 @@ static void export_image_worker(gpointer data, gpointer user_data) {
     g_free(custom_text);
     g_free(azimuth_str);
     g_free(orig_basename);
+    g_free(pu_code);
+    g_free(out_dir);
     g_free(out_path);
     g_free(item);
 
@@ -1515,14 +1540,19 @@ static gboolean on_export_finished_idle(gpointer user_data) {
 
     /* Dialog showing post-export summary */
     if (data->self) {
+        gboolean incomplete = data->completed < data->total;
+        gboolean has_warnings = data->warn_gps > 0 || data->warn_wm > 0 || data->warn_id > 0;
+
         body = g_string_new("");
 
-        if (data->errors == 0 && data->warn_gps == 0 && data->warn_wm == 0 && data->warn_id == 0) {
+        if (data->errors == 0 && !has_warnings && !incomplete) {
             heading = g_strdup("Export Finished Successfully");
-            g_string_append_printf(body, "All %u photos were exported successfully with complete metadata.", data->total);
+            g_string_append_printf(body, "All %u photos were exported successfully with complete metadata.", data->success);
         } else {
-            heading = g_strdup_printf("Export Finished (%u Photos)", data->total);
-            g_string_append_printf(body, "• Successful: %u\n", data->success);
+            heading = incomplete && data->errors == 0 && !has_warnings
+                          ? g_strdup("Export Cancelled")
+                          : g_strdup_printf("Export Finished (%u Photos)", data->success);
+            g_string_append_printf(body, "• Successful: %u of %u\n", data->success, data->total);
             if (data->warn_gps > 0 || data->warn_wm > 0 || data->warn_id > 0) {
                 g_string_append(body, "\n• Warnings:\n");
                 if (data->warn_gps > 0)
@@ -1558,6 +1588,7 @@ static gpointer export_worker_thread(gpointer user_data) {
     guint total;
     guint i;
     char *msg;
+    guint completed = 0;
     int success = 0, errors = 0, warn_gps = 0, warn_wm = 0, warn_id = 0;
 
     td = (ExportThreadData *)user_data;
@@ -1696,6 +1727,7 @@ static gpointer export_worker_thread(gpointer user_data) {
         g_mutex_clear(&ctx.argfile_mutex);
 
         success = g_atomic_int_get(&ctx.success_count);
+        completed = g_atomic_int_get(&ctx.completed);
         errors = g_atomic_int_get(&ctx.error_count);
         warn_gps = g_atomic_int_get(&ctx.warn_gps_missing);
         warn_wm = g_atomic_int_get(&ctx.warn_wm_missing);
@@ -1735,7 +1767,7 @@ static gpointer export_worker_thread(gpointer user_data) {
             finish->app = g_object_ref(app);
             finish->self = window_self;
             finish->cookie = td->inhibit_cookie;
-            finish->completed = total;
+            finish->completed = completed;
             finish->total = total;
             finish->success = success;
             finish->errors = errors;

@@ -6,56 +6,15 @@
 #include <stdlib.h>
 #include <math.h>
 
-static inline int extract_digits_fast(const char *name) {
-    int val = -1;
-    const char *p;
-    if (!name) return -1;
-    for (p = name; *p; p++) {
-        if (g_ascii_isdigit(*p)) {
-            if (val < 0) val = 0;
-            if (val < 100000000) val = val * 10 + (*p - '0');
-        }
-    }
-    return val;
+static gint compare_strings_naturally(gconstpointer a, gconstpointer b) {
+    const char *str_a = *(const char **)a;
+    const char *str_b = *(const char **)b;
+    return stampy_natural_strcasecmp(str_a, str_b);
 }
 
-/* Sorts files by their digit sequence ("2.jpg" before "10.jpg") with zero allocations. */
-static gint compare_file_basenames(gconstpointer a, gconstpointer b) {
-    GFile *file_a = *(GFile **)a;
-    GFile *file_b = *(GFile **)b;
-    const char *path_a;
-    const char *path_b;
-    const char *base_a;
-    const char *base_b;
-    int id_a, id_b;
-
-    if (!file_a || !file_b) return 0;
-
-    path_a = g_file_peek_path(file_a);
-    path_b = g_file_peek_path(file_b);
-
-    if (path_a) {
-        base_a = strrchr(path_a, '/');
-        base_a = base_a ? base_a + 1 : path_a;
-    } else {
-        base_a = "";
-    }
-
-    if (path_b) {
-        base_b = strrchr(path_b, '/');
-        base_b = base_b ? base_b + 1 : path_b;
-    } else {
-        base_b = "";
-    }
-
-    id_a = extract_digits_fast(base_a);
-    id_b = extract_digits_fast(base_b);
-
-    if (id_a >= 0 && id_b >= 0 && id_a != id_b) {
-        return id_a - id_b;
-    }
-
-    return strcmp(base_a, base_b);
+/* Sorts files naturally by path with zero heap allocations. */
+static gint compare_file_pu_then_basename(gconstpointer a, gconstpointer b) {
+    return stampy_compare_files_naturally(a, b);
 }
 
 /* Updates the preview when the listbox selection changes. */
@@ -145,8 +104,34 @@ static void on_dropdown_setting_changed(GObject *gobject, GParamSpec *pspec, gpo
     on_panel_setting_changed(NULL, self);
 }
 
+static gboolean in_pu_dropdown_update = FALSE;
+static void stampy_rebuild_file_listbox(StampyWindow *self);
+
+static void on_pu_folder_selected(GObject *gobject, GParamSpec *pspec, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    guint selected;
+    const char *pu_name;
+
+    (void)gobject;
+    (void)pspec;
+    if (!self || in_pu_dropdown_update || !self->pu_folders || !self->drop_pu_folder) return;
+
+    selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(self->drop_pu_folder));
+    if (selected == GTK_INVALID_LIST_POSITION || selected >= self->pu_folders->len) return;
+
+    pu_name = g_ptr_array_index(self->pu_folders, selected);
+    if (!pu_name || g_strcmp0(self->selected_pu_folder, pu_name) == 0) return;
+
+    g_free(self->selected_pu_folder);
+    self->selected_pu_folder = g_strdup(pu_name);
+
+    stampy_rebuild_file_listbox(self);
+}
+
 void stampy_connect_panel_signals(StampyWindow *self) {
     if (!self) return;
+
+    if (self->drop_pu_folder) g_signal_connect(self->drop_pu_folder, "notify::selected", G_CALLBACK(on_pu_folder_selected), self);
 
     if (self->val_compass_size) g_signal_connect(self->val_compass_size, "value-changed", G_CALLBACK(on_panel_setting_changed), self);
     if (self->val_compass_margin_x) g_signal_connect(self->val_compass_margin_x, "value-changed", G_CALLBACK(on_panel_setting_changed), self);
@@ -185,9 +170,23 @@ void stampy_connect_panel_signals(StampyWindow *self) {
 
 /* Rebuilds the file listbox, sorted naturally. */
 static void append_file_row(StampyWindow *self, GFile *file) {
+    char *rel_subpath = stampy_get_pu_rel_subpath_for_file(file);
     char *basename = g_file_get_basename(file);
+    char *display_name = NULL;
     GtkWidget *row = gtk_list_box_row_new();
-    GtkWidget *label = gtk_label_new(basename);
+    GtkWidget *label;
+
+    /* If the file is in a subfolder under the PU folder, display "Subfolder/1.jpg" */
+    if (rel_subpath && strchr(rel_subpath, '/') != NULL) {
+        const char *after_pu = strchr(rel_subpath, '/') + 1;
+        display_name = g_strdup_printf("%s/%s", after_pu, basename);
+    } else {
+        display_name = g_strdup(basename);
+    }
+    g_free(rel_subpath);
+
+    label = gtk_label_new(display_name);
+    g_free(display_name);
 
     gtk_label_set_xalign(GTK_LABEL(label), 0.0);
     gtk_widget_set_margin_start(label, 12);
@@ -196,6 +195,7 @@ static void append_file_row(StampyWindow *self, GFile *file) {
     gtk_widget_set_margin_bottom(label, 8);
 
     gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), label);
+    g_object_set_data_full(G_OBJECT(row), "file", g_object_ref(file), g_object_unref);
     gtk_list_box_append(GTK_LIST_BOX(self->file_listbox), row);
     g_free(basename);
 }
@@ -228,6 +228,7 @@ static void finish_list_population(StampyWindow *self) {
 
 typedef struct {
     StampyWindow *self;
+    GPtrArray *files;
     guint generation;
     guint index;
     guint total;
@@ -236,6 +237,7 @@ typedef struct {
 static void populate_task_free(gpointer data) {
     PopulateTask *task = data;
     if (task) {
+        if (task->files) g_ptr_array_unref(task->files);
         if (task->self) g_object_unref(task->self);
         g_free(task);
     }
@@ -248,14 +250,14 @@ static gboolean populate_chunk_cb(gpointer user_data) {
     guint end;
 
     if (task->generation != self->populate_generation ||
-        !self->image_files || task->total != self->image_files->len) {
+        !task->files || task->total != task->files->len) {
         self->populate_source_id = 0;
         return G_SOURCE_REMOVE;
     }
 
     end = MIN(task->index + 250, task->total);
     for (; task->index < end; task->index++) {
-        GFile *file = g_ptr_array_index(self->image_files, task->index);
+        GFile *file = g_ptr_array_index(task->files, task->index);
         if (file) append_file_row(self, file);
     }
 
@@ -276,9 +278,8 @@ static gboolean populate_chunk_cb(gpointer user_data) {
     return G_SOURCE_REMOVE;
 }
 
-/* Guarantees one list entry per output filename. Duplicate basenames (for
- * example a photo and its previously exported copy) would overwrite each
- * other on export, so only the first occurrence is kept. */
+/* Guarantees one list entry per unique (PU_Folder, Filename/No). Duplicate
+ * basenames across different PU folders must NEVER be removed. */
 static void dedupe_image_files(StampyWindow *self) {
     GHashTable *seen;
     GPtrArray *unique;
@@ -292,21 +293,27 @@ static void dedupe_image_files(StampyWindow *self) {
 
     for (i = 0; i < self->image_files->len; i++) {
         GFile *file = g_ptr_array_index(self->image_files, i);
-        const char *path;
-        const char *base;
+        char *subpath = NULL;
+        char *base = NULL;
         char *key = NULL;
         gboolean duplicate = FALSE;
 
         if (!file) continue;
 
-        /* Key by basename: exports are written by basename into one folder,
-         * so two files with the same name always collide anyway. */
-        path = g_file_peek_path(file);
-        if (path) {
-            base = strrchr(path, '/');
-            base = base ? base + 1 : path;
-            key = g_utf8_strdown(base, -1);
+        /* Key by (PU_rel_subpath, Filename/No) composite key.
+         * Files with the same name in different PU folders or subfolders must NEVER collide. */
+        subpath = stampy_get_pu_rel_subpath_for_file(file);
+        base = g_file_get_basename(file);
+
+        if (base) {
+            char *norm_subpath = subpath ? g_utf8_strdown(subpath, -1) : g_strdup("");
+            char *norm_base = g_utf8_strdown(base, -1);
+            key = g_strdup_printf("%s|%s", norm_subpath, norm_base);
+            g_free(norm_subpath);
+            g_free(norm_base);
         }
+        g_free(subpath);
+        g_free(base);
 
         if (key) {
             if (g_hash_table_contains(seen, key))
@@ -357,23 +364,110 @@ static void clear_listbox_safely(GtkListBox *box) {
     }
 }
 
-void stampy_populate_file_listbox(StampyWindow *self) {
+/* Populates the PU Folder Selector dropdown at the top of the file viewer. */
+void stampy_populate_pu_dropdown(StampyWindow *self) {
+    GHashTable *seen_pu;
+    GPtrArray *pu_list;
+    GtkStringList *string_list;
+    guint i;
+    int selected_idx = -1;
+
+    if (!self || !self->drop_pu_folder || !self->box_pu_selector) return;
+
+    if (!self->image_files || self->image_files->len == 0) {
+        gtk_widget_set_visible(self->box_pu_selector, FALSE);
+        g_clear_pointer(&self->pu_folders, g_ptr_array_unref);
+        g_clear_pointer(&self->selected_pu_folder, g_free);
+        return;
+    }
+
+    seen_pu = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    pu_list = g_ptr_array_new_with_free_func(g_free);
+
+    for (i = 0; i < self->image_files->len; i++) {
+        GFile *file = g_ptr_array_index(self->image_files, i);
+        char *pu = stampy_get_pu_code_for_file(file);
+        if (pu && *pu != '\0') {
+            if (!g_hash_table_contains(seen_pu, pu)) {
+                g_hash_table_add(seen_pu, g_strdup(pu));
+                g_ptr_array_add(pu_list, g_strdup(pu));
+            }
+        }
+        g_free(pu);
+    }
+    g_hash_table_unref(seen_pu);
+
+    /* Sort PU folder names naturally (e.g. PU III.3 before PU III.12) */
+    if (pu_list->len > 1) {
+        g_ptr_array_sort(pu_list, (GCompareFunc)compare_strings_naturally);
+    }
+
+    /* Only show dropdown if multiple PU folders exist */
+    if (pu_list->len > 1) {
+        gboolean pu_changed = TRUE;
+
+        /* Check if the set of PU folders actually changed */
+        if (self->pu_folders && self->pu_folders->len == pu_list->len) {
+            pu_changed = FALSE;
+            for (i = 0; i < pu_list->len; i++) {
+                if (g_strcmp0(g_ptr_array_index(self->pu_folders, i), g_ptr_array_index(pu_list, i)) != 0) {
+                    pu_changed = TRUE;
+                    break;
+                }
+            }
+        }
+
+        if (pu_changed) {
+            string_list = gtk_string_list_new(NULL);
+            for (i = 0; i < pu_list->len; i++) {
+                const char *pu = g_ptr_array_index(pu_list, i);
+                gtk_string_list_append(string_list, pu);
+                if (self->selected_pu_folder && g_strcmp0(self->selected_pu_folder, pu) == 0) {
+                    selected_idx = (int)i;
+                }
+            }
+
+            g_clear_pointer(&self->pu_folders, g_ptr_array_unref);
+            self->pu_folders = pu_list;
+
+            if (selected_idx < 0) {
+                selected_idx = 0;
+                g_free(self->selected_pu_folder);
+                self->selected_pu_folder = g_strdup(g_ptr_array_index(self->pu_folders, 0));
+            }
+
+            in_pu_dropdown_update = TRUE;
+            g_signal_handlers_block_by_func(self->drop_pu_folder, on_pu_folder_selected, self);
+            gtk_drop_down_set_model(GTK_DROP_DOWN(self->drop_pu_folder), G_LIST_MODEL(string_list));
+            g_object_unref(string_list);
+            gtk_drop_down_set_selected(GTK_DROP_DOWN(self->drop_pu_folder), (guint)selected_idx);
+            g_signal_handlers_unblock_by_func(self->drop_pu_folder, on_pu_folder_selected, self);
+            in_pu_dropdown_update = FALSE;
+
+            gtk_widget_set_visible(self->box_pu_selector, TRUE);
+        } else {
+            g_ptr_array_unref(pu_list);
+        }
+    } else {
+        /* Single PU folder or flat files: hide dropdown, show all */
+        gtk_widget_set_visible(self->box_pu_selector, FALSE);
+        g_clear_pointer(&self->pu_folders, g_ptr_array_unref);
+        self->pu_folders = pu_list;
+        g_clear_pointer(&self->selected_pu_folder, g_free);
+    }
+}
+
+static void stampy_rebuild_file_listbox(StampyWindow *self) {
+    GPtrArray *display_files;
     guint total, i;
 
     if (!self || !self->file_listbox) return;
-
-    dedupe_image_files(self);
 
     /* Cancel any in-flight chunked population. */
     self->populate_generation++;
     if (self->populate_source_id > 0) {
         g_source_remove(self->populate_source_id);
         self->populate_source_id = 0;
-    }
-
-    /* Sort before rebuilding rows. */
-    if (self->image_files && self->image_files->len > 0) {
-        g_ptr_array_sort(self->image_files, compare_file_basenames);
     }
 
     g_signal_handlers_block_matched(self->file_listbox, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, self);
@@ -405,13 +499,27 @@ void stampy_populate_file_listbox(StampyWindow *self) {
         return;
     }
 
-    total = self->image_files->len;
+    /* Filter images belonging to the selected PU folder (or all if single/none) */
+    display_files = g_ptr_array_new_with_free_func(g_object_unref);
+    for (i = 0; i < self->image_files->len; i++) {
+        GFile *file = g_ptr_array_index(self->image_files, i);
+        char *pu = stampy_get_pu_code_for_file(file);
+        gboolean match = (self->selected_pu_folder == NULL ||
+                          (pu && g_strcmp0(pu, self->selected_pu_folder) == 0));
+        g_free(pu);
+        if (match) {
+            g_ptr_array_add(display_files, g_object_ref(file));
+        }
+    }
+
+    total = display_files->len;
 
     if (total <= 200) {
         for (i = 0; i < total; i++) {
-            GFile *file = g_ptr_array_index(self->image_files, i);
+            GFile *file = g_ptr_array_index(display_files, i);
             if (file) append_file_row(self, file);
         }
+        g_ptr_array_unref(display_files);
         finish_list_population(self);
         return;
     }
@@ -421,6 +529,7 @@ void stampy_populate_file_listbox(StampyWindow *self) {
         PopulateTask *task = g_new0(PopulateTask, 1);
 
         task->self = g_object_ref(self);
+        task->files = display_files;
         task->generation = self->populate_generation;
         task->total = total;
         if (self->left_stack) {
@@ -432,6 +541,22 @@ void stampy_populate_file_listbox(StampyWindow *self) {
                                                    populate_chunk_cb, task,
                                                    populate_task_free);
     }
+}
+
+void stampy_populate_file_listbox(StampyWindow *self) {
+    if (!self || !self->file_listbox) return;
+
+    dedupe_image_files(self);
+
+    /* Sort all images: PU folders naturally first, then filenames naturally. */
+    if (self->image_files && self->image_files->len > 0) {
+        g_ptr_array_sort(self->image_files, compare_file_pu_then_basename);
+    }
+
+    /* Update PU folder dropdown and active selection */
+    stampy_populate_pu_dropdown(self);
+
+    stampy_rebuild_file_listbox(self);
 }
 
 static void on_listbox_right_click(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
@@ -491,17 +616,8 @@ static void on_deselect_all_activated(GSimpleAction *action, GVariant *parameter
     }
 }
 
-static gint compare_ints_desc(gconstpointer a, gconstpointer b) {
-    int val_a = *(const int*)a;
-    int val_b = *(const int*)b;
-    if (val_b > val_a) return 1;
-    if (val_b < val_a) return -1;
-    return 0;
-}
-
 static void on_remove_selected_activated(GSimpleAction *action, GVariant *parameter, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
-    GArray *indices = NULL;
     GList *selected_rows, *l;
 
     (void)action; (void)parameter;
@@ -510,27 +626,14 @@ static void on_remove_selected_activated(GSimpleAction *action, GVariant *parame
     selected_rows = gtk_list_box_get_selected_rows(GTK_LIST_BOX(self->file_listbox));
     if (!selected_rows) return;
 
-    indices = g_array_new(FALSE, FALSE, sizeof(int));
-
     for (l = selected_rows; l != NULL; l = l->next) {
-        int idx = gtk_list_box_row_get_index(GTK_LIST_BOX_ROW(l->data));
-        if (idx >= 0) g_array_append_val(indices, idx);
-    }
-    g_list_free(selected_rows);
-
-    if (indices->len > 0) {
-        guint i;
-        g_array_sort(indices, compare_ints_desc);
-
-        for (i = 0; i < indices->len; i++) {
-            int remove_idx = g_array_index(indices, int, i);
-            if (remove_idx >= 0 && (guint)remove_idx < self->image_files->len) {
-                g_ptr_array_remove_index(self->image_files, remove_idx);
-            }
+        GtkListBoxRow *row = GTK_LIST_BOX_ROW(l->data);
+        GFile *file = G_FILE(g_object_get_data(G_OBJECT(row), "file"));
+        if (file) {
+            g_ptr_array_remove(self->image_files, file);
         }
     }
-
-    g_array_free(indices, TRUE);
+    g_list_free(selected_rows);
 
     /* The loaded set no longer matches the cached folder tree. */
     g_clear_pointer(&self->scan_cache_sources, g_ptr_array_unref);
@@ -577,6 +680,10 @@ static void on_clear_all_clicked(GtkButton *btn, gpointer user_data) {
     if (self->image_files) {
         g_ptr_array_remove_range(self->image_files, 0, self->image_files->len);
     }
+
+    g_clear_pointer(&self->pu_folders, g_ptr_array_unref);
+    g_clear_pointer(&self->selected_pu_folder, g_free);
+    if (self->box_pu_selector) gtk_widget_set_visible(self->box_pu_selector, FALSE);
 
     if (self->geo_table) {
         g_hash_table_remove_all(self->geo_table);

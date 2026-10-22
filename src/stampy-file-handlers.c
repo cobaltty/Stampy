@@ -12,7 +12,8 @@ static void on_btn_docx_clicked(GtkButton *btn, gpointer user_data);
 static void on_btn_xlsx_clicked(GtkButton *btn, gpointer user_data);
 
 /* Column mapping: maps Excel column letter to field type.
-   field_type: 0=id(NO), 1=longitude(X), 2=latitude(Y), 3=azimuth(Azh), 4=time(Jam) */
+   field_type: 0=No, 1=longitude(X), 2=latitude(Y), 3=azimuth(Azh),
+               4=time(Jam), 5=PU group code */
 typedef struct {
     char col_letter;
     int field_type;
@@ -124,12 +125,20 @@ static int scan_excel_column_map(const char *xml_buf, GPtrArray *shared_strings,
             }
             clean[clen] = '\0';
 
-            if (g_strcmp0(clean, "no") == 0 || g_strcmp0(clean, "nopu") == 0 ||
-                g_strcmp0(clean, "nomor") == 0 || g_strcmp0(clean, "id") == 0 ||
-                g_strcmp0(clean, "number") == 0 || g_strcmp0(clean, "pu") == 0 ||
-                g_strcmp0(clean, "kodepu") == 0 || g_strcmp0(clean, "idfoto") == 0 ||
-                g_strcmp0(clean, "photoid") == 0) {
-                field_type = 0; /* ID */
+            if (g_strcmp0(clean, "pu") == 0) {
+                /* New sheets put PU in column B; elsewhere "PU" was the old
+                 * photo-id header, so keep that legacy mapping intact. */
+                field_type = (col_letter == 'B') ? 5 : 0;
+            } else if (g_strcmp0(clean, "kodepu") == 0 ||
+                       g_strcmp0(clean, "kode") == 0 ||
+                       g_strcmp0(clean, "kodeunit") == 0 ||
+                       g_strcmp0(clean, "unit") == 0) {
+                field_type = 5; /* PU group code */
+            } else if (g_strcmp0(clean, "no") == 0 || g_strcmp0(clean, "nopu") == 0 ||
+                       g_strcmp0(clean, "nomor") == 0 || g_strcmp0(clean, "id") == 0 ||
+                       g_strcmp0(clean, "number") == 0 || g_strcmp0(clean, "idfoto") == 0 ||
+                       g_strcmp0(clean, "photoid") == 0) {
+                field_type = 0; /* No / ID */
             } else if (g_strcmp0(clean, "x") == 0 || strstr(clean, "long") != NULL ||
                        strstr(clean, "bujur") != NULL || strstr(clean, "east") != NULL ||
                        g_str_has_prefix(clean, "x")) {
@@ -349,6 +358,8 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
             gboolean has_map_lon = FALSE;
             gboolean has_map_lat = FALSE;
             gboolean has_map_azh = FALSE;
+            gboolean has_map_pu = FALSE;
+            gboolean has_map_id = FALSE;
             char *row_p;
             int k;
 
@@ -358,6 +369,39 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                 if (col_map.entries[k].field_type == 1) has_map_lon = TRUE;
                 if (col_map.entries[k].field_type == 2) has_map_lat = TRUE;
                 if (col_map.entries[k].field_type == 3) has_map_azh = TRUE;
+                if (col_map.entries[k].field_type == 5) has_map_pu = TRUE;
+            }
+
+            /* New sheets keep the PU group code in column B. Only fall back to
+             * that position when B is not already a coordinate/time column. */
+            if (!has_map_pu && col_map.count < 16) {
+                int b_type = colmap_get_field_type(&col_map, 'B');
+                if (b_type != 1 && b_type != 2 && b_type != 3 && b_type != 4) {
+                    if (b_type >= 0) {
+                        for (k = 0; k < col_map.count; k++) {
+                            if (col_map.entries[k].col_letter == 'B') {
+                                col_map.entries[k].field_type = 5;
+                                break;
+                            }
+                        }
+                    } else {
+                        col_map.entries[col_map.count].col_letter = 'B';
+                        col_map.entries[col_map.count].field_type = 5;
+                        col_map.count++;
+                    }
+                }
+            }
+
+            /* Column A always carries the per-PU sequence number. */
+            has_map_id = FALSE;
+            for (k = 0; k < col_map.count; k++) {
+                if (col_map.entries[k].field_type == 0) has_map_id = TRUE;
+            }
+            if (!has_map_id && col_map.count < 16 &&
+                colmap_get_field_type(&col_map, 'A') < 0) {
+                col_map.entries[col_map.count].col_letter = 'A';
+                col_map.entries[col_map.count].field_type = 0;
+                col_map.count++;
             }
 
             if (!has_map_lon || !has_map_lat || !has_map_azh) {
@@ -400,18 +444,19 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                 g_free(f_base);
                 g_string_free(missing_cols, TRUE);
 
-                /* Safe default fallback if auto-detection misses coordinates */
+                /* Safe default fallback if auto-detection misses coordinates.
+                 * New layout: A=No, B=PU, C=X, D=Y, E=Azimuth, F=Time. */
                 col_map.count = 0;
                 col_map.entries[0] = (ColMapEntry){'A', 0};
-                col_map.entries[1] = (ColMapEntry){'B', 1};
-                col_map.entries[2] = (ColMapEntry){'C', 2};
-                col_map.entries[3] = (ColMapEntry){'D', 3};
-                col_map.entries[4] = (ColMapEntry){'E', 4};
+                col_map.entries[1] = (ColMapEntry){'B', 5};
+                col_map.entries[2] = (ColMapEntry){'C', 1};
+                col_map.entries[3] = (ColMapEntry){'D', 2};
+                col_map.entries[4] = (ColMapEntry){'E', 3};
                 col_map.entries[5] = (ColMapEntry){'F', 4};
                 col_map.count = 6;
-                stampy_append_log(self, "[INFO] Using default column mapping: A=ID B=X C=Y D=Azimuth");
+                stampy_append_log(self, "[INFO] Using default column mapping: A=No B=PU C=X D=Y E=Azimuth");
             } else {
-                const char *f_names[] = {"ID", "Lon", "Lat", "Azimuth", "Time"};
+                const char *f_names[] = {"No", "Lon", "Lat", "Azimuth", "Time", "PU"};
                 GString *map_str = g_string_new("[INFO] Excel columns mapped: ");
 
                 if (self->banner_critical_coords) {
@@ -421,7 +466,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
 
                 for (k = 0; k < col_map.count; k++) {
                     int ft = col_map.entries[k].field_type;
-                    if (ft >= 0 && ft <= 4) {
+                    if (ft >= 0 && ft <= 5) {
                         g_string_append_printf(map_str, "%c=%s ",
                                                col_map.entries[k].col_letter, f_names[ft]);
                     }
@@ -439,6 +484,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                 double current_lat = 0.0;
                 double current_azimuth = 0.0;
                 double current_time = 0.0;
+                char current_pu[64] = {0};
                 gboolean has_id = FALSE, has_lon = FALSE, has_lat = FALSE;
                 char *cell_p;
 
@@ -475,7 +521,12 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                                     int ss_idx = atoi(val_str);
                                     if (ss_idx >= 0 && ss_idx < (int)shared_strings->len) {
                                         const char *cell_str = g_ptr_array_index(shared_strings, ss_idx);
-                                        if (field_type == 3) {
+                                        if (field_type == 5) {
+                                            g_strlcpy(current_pu, cell_str, sizeof(current_pu));
+                                            g_strstrip(current_pu);
+                                        } else if (field_type == 0) {
+                                            val = g_ascii_strtod(cell_str, NULL);
+                                        } else if (field_type == 3) {
                                             val = parse_azimuth_string(cell_str);
                                         } else if (field_type == 4) {
                                             int h = 0, m = 0, s = 0;
@@ -489,7 +540,10 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                                         }
                                     }
                                 } else {
-                                    if (field_type == 1 || field_type == 2) {
+                                    if (field_type == 5) {
+                                        g_strlcpy(current_pu, val_str, sizeof(current_pu));
+                                        g_strstrip(current_pu);
+                                    } else if (field_type == 1 || field_type == 2) {
                                         /* Lat/Lon: use parse_coord_string to handle comma decimals & direction */
                                         val = parse_coord_string(val_str);
                                     } else if (field_type == 3) {
@@ -532,7 +586,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
 
                 if (has_id && has_lat && has_lon && current_id > 0) {
                     GeolocationEntry *entry;
-                    char key_str[64];
+                    char *key_str;
 
                     if (fabs(current_lon) < 90.0 && fabs(current_lat) > 90.0) {
                         double temp = current_lon;
@@ -542,13 +596,14 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
 
                     entry = g_new0(GeolocationEntry, 1);
                     entry->no = current_id;
+                    g_strlcpy(entry->pu_code, current_pu, sizeof(entry->pu_code));
                     entry->longitude = current_lon;
                     entry->latitude = current_lat;
                     entry->azimuth_raw = current_azimuth;
                     entry->time_val = current_time;
 
-                    snprintf(key_str, sizeof(key_str), "%d", current_id);
-                    g_hash_table_insert(self->geo_table, g_strdup(key_str), entry);
+                    key_str = stampy_make_geo_key(current_pu, current_id);
+                    g_hash_table_insert(self->geo_table, key_str, entry);
                     loaded_count++;
                 }
                 row_p = row_end + 6;
@@ -593,31 +648,38 @@ static void scan_task_data_free(gpointer data) {
 }
 
 static gboolean is_supported_image_name(const char *name) {
-    char *lower;
-    gboolean ok;
+    const char *ext;
 
     if (!name) return FALSE;
+    ext = strrchr(name, '.');
+    if (!ext) return FALSE;
 
-    lower = g_utf8_strdown(name, -1);
-    ok = g_str_has_suffix(lower, ".jpg") ||
-         g_str_has_suffix(lower, ".jpeg") ||
-         g_str_has_suffix(lower, ".png");
-    g_free(lower);
-    return ok;
+    return (g_ascii_strcasecmp(ext, ".jpg") == 0 ||
+            g_ascii_strcasecmp(ext, ".jpeg") == 0 ||
+            g_ascii_strcasecmp(ext, ".png") == 0);
 }
 
 /* Directories created by Stampy's own export. Scanning them again feeds
  * previously exported copies back into the list as duplicates. */
 static gboolean is_export_output_dir(const char *name) {
-    char *lower;
-    gboolean result;
-
+    size_t len;
     if (!name) return FALSE;
+    len = strlen(name);
+    if (len < 8) return FALSE;
+    return (g_ascii_strcasecmp(name + len - 8, "_stamped") == 0);
+}
 
-    lower = g_utf8_strdown(name, -1);
-    result = g_str_has_suffix(lower, "_stamped");
-    g_free(lower);
-    return result;
+/* Compass asset folders (e.g. "Kompas Monev", "compass") must not be scanned as photos. */
+static gboolean is_compass_dir_name(const char *name) {
+    const char *p;
+    if (!name) return FALSE;
+    for (p = name; *p; p++) {
+        if (g_ascii_strncasecmp(p, "kompas", 6) == 0 ||
+            g_ascii_strncasecmp(p, "compass", 7) == 0) {
+            return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 /* Reuses the type already delivered by the directory enumerator, so a rescan
@@ -659,7 +721,8 @@ static void collect_images(GPtrArray *out, GFile *file, GFileType type,
                 GFileType child_type = g_file_info_get_file_type(info);
 
                 if (name && *name != '.' &&
-                    !(child_type == G_FILE_TYPE_DIRECTORY && is_export_output_dir(name))) {
+                    !(child_type == G_FILE_TYPE_DIRECTORY &&
+                      (is_export_output_dir(name) || is_compass_dir_name(name)))) {
                     GFile *child = g_file_get_child(file, name);
                     collect_images(out, child, child_type, dir_times, cancel);
                     g_object_unref(child);
@@ -700,6 +763,7 @@ static void scan_thread(GTask *task, gpointer source, gpointer task_data, GCance
 
     images = scan->images;
     scan->images = NULL;
+    g_ptr_array_sort(images, stampy_compare_files_naturally);
     g_task_return_pointer(task, images, (GDestroyNotify)g_ptr_array_unref);
 }
 
@@ -875,7 +939,7 @@ static gboolean scan_cache_is_fresh(StampyWindow *self) {
 }
 
 /* Imports dropped image files and folders asynchronously. */
-static void stampy_add_image_files(StampyWindow *self, GSList *files) {
+void stampy_add_image_files(StampyWindow *self, GSList *files) {
     ScanTaskData *scan;
     GTask *task;
     GCancellable *cancellable;

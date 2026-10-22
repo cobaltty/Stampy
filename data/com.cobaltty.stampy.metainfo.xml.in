@@ -45,6 +45,17 @@
   </screenshots>
 
   <releases>
+    <release version="1.1020.beta" date="2026-10-23">
+      <description>
+        <p>PU composite key support, per-folder view, and performance improvements.</p>
+        <ul>
+          <li>Added composite (PU, No) metadata matching for Excel and DOCX.</li>
+          <li>Added PU folder selector dropdown in the file viewer sidebar.</li>
+          <li>Preserve subfolder structures on export.</li>
+          <li>Optimized DOCX lookup with in-memory hash index.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.921.beta" date="2026-10-20">
       <description>
         <p>Increments support, quality-of-life improvements, and bug fixes.</p>

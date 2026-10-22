@@ -174,6 +174,11 @@ static void stampy_window_dispose(GObject *object) {
         self->docx_cached_lines = NULL;
     }
 
+    if (self->docx_table) {
+        g_hash_table_destroy(self->docx_table);
+        self->docx_table = NULL;
+    }
+
     if (self->docx_cached_path) {
         g_free(self->docx_cached_path);
         self->docx_cached_path = NULL;
@@ -183,6 +188,9 @@ static void stampy_window_dispose(GObject *object) {
         g_object_unref(self->default_export_folder);
         self->default_export_folder = NULL;
     }
+
+    g_clear_pointer(&self->pu_folders, g_ptr_array_unref);
+    g_clear_pointer(&self->selected_pu_folder, g_free);
 
     if (self->import_root) {
         g_object_unref(self->import_root);
@@ -224,6 +232,8 @@ static void stampy_window_class_init(StampyWindowClass *klass) {
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_critical_coords);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, left_stack);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, drop_area_frame);
+    gtk_widget_class_bind_template_child(widget_class, StampyWindow, box_pu_selector);
+    gtk_widget_class_bind_template_child(widget_class, StampyWindow, drop_pu_folder);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, file_listbox);
 
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_compass);

@@ -105,6 +105,238 @@ static char *extract_pure_id(const char *input) {
     return g_strdup(input);
 }
 
+/* Trims and case-folds a PU code for safe matching. */
+static char *normalize_pu_code(const char *pu_code) {
+    char *trimmed;
+    char *folded;
+    GString *out;
+    gboolean pending_space = FALSE;
+    const char *p;
+
+    if (!pu_code) return g_strdup("");
+
+    trimmed = g_strdup(pu_code);
+    g_strstrip(trimmed);
+    folded = g_utf8_casefold(trimmed, -1);
+    g_free(trimmed);
+
+    out = g_string_new("");
+    for (p = folded; *p; p++) {
+        if (g_ascii_isspace(*p)) {
+            if (out->len > 0) pending_space = TRUE;
+        } else {
+            if (pending_space) g_string_append_c(out, ' ');
+            g_string_append_c(out, *p);
+            pending_space = FALSE;
+        }
+    }
+    g_free(folded);
+
+    return g_string_free(out, FALSE);
+}
+
+/* Builds the composite (PU, No) key used by the geolocation table. */
+char *stampy_make_geo_key(const char *pu_code, int photo_id) {
+    char *norm_pu = normalize_pu_code(pu_code);
+    char *key;
+
+    if (norm_pu && *norm_pu) {
+        key = g_strdup_printf("%s|%d", norm_pu, photo_id);
+    } else {
+        key = g_strdup_printf("%d", photo_id);
+    }
+
+    g_free(norm_pu);
+    return key;
+}
+
+static gboolean is_pu_folder_name(const char *name) {
+    const char *p;
+    if (!name) return FALSE;
+    p = name;
+    while (*p == ' ' || *p == '\t') p++;
+    if (g_ascii_strncasecmp(p, "pu", 2) == 0) {
+        char next = p[2];
+        if (next == ' ' || next == '.' || next == '_' || next == '-' ||
+            g_ascii_isdigit(next) || next == '\0') {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/* Reads the PU group name from the image's parent or ancestor folder.
+ * Fast, allocation-free path scanning. */
+char *stampy_get_pu_code_for_file(GFile *file) {
+    const char *path;
+    const char *last_slash;
+    const char *prev_slash;
+
+    if (!file) return NULL;
+
+    path = g_file_peek_path(file);
+    if (!path) {
+        GFile *p = g_file_get_parent(file);
+        char *pu = NULL;
+        if (p) {
+            char *b = g_file_get_basename(p);
+            g_object_unref(p);
+            if (b) {
+                pu = g_strdup(b);
+                g_strstrip(pu);
+                g_free(b);
+            }
+        }
+        return (pu && *pu != '\0') ? pu : NULL;
+    }
+
+    last_slash = strrchr(path, '/');
+    if (!last_slash || last_slash == path) return NULL;
+
+    /* Scan backwards to extract the immediate parent folder name */
+    prev_slash = last_slash - 1;
+    while (prev_slash > path && *prev_slash != '/') prev_slash--;
+    if (*prev_slash == '/') prev_slash++;
+
+    if (last_slash > prev_slash) {
+        char *parent_name = g_strndup(prev_slash, last_slash - prev_slash);
+        g_strstrip(parent_name);
+
+        if (is_pu_folder_name(parent_name)) {
+            return parent_name;
+        }
+
+        /* Check grandparent if immediate parent does not start with PU */
+        if (prev_slash > path + 1) {
+            const char *gp_end = prev_slash - 1;
+            const char *gp_slash = gp_end - 1;
+            while (gp_slash > path && *gp_slash != '/') gp_slash--;
+            if (*gp_slash == '/') gp_slash++;
+            if (gp_end > gp_slash) {
+                char *gp_name = g_strndup(gp_slash, gp_end - gp_slash);
+                g_strstrip(gp_name);
+                if (is_pu_folder_name(gp_name)) {
+                    g_free(parent_name);
+                    return gp_name;
+                }
+                g_free(gp_name);
+            }
+        }
+
+        if (*parent_name != '\0') return parent_name;
+        g_free(parent_name);
+    }
+
+    return NULL;
+}
+
+/* Extracts the relative export subpath from the PU folder down to the file's directory.
+ * E.g.:
+ *   ".../PU III.15/1.jpg"                -> "PU III.15"
+ *   ".../PU III.15/Camera A/1.jpg"       -> "PU III.15/Camera A"
+ *   ".../PU III.15/Sub1/Sub2/1.jpg"      -> "PU III.15/Sub1/Sub2"
+ */
+char *stampy_get_pu_rel_subpath_for_file(GFile *file) {
+    const char *path;
+    char *dyn_path = NULL;
+    const char *last_slash;
+    const char *seg_end;
+    const char *seg_start;
+    const char *pu_start = NULL;
+    char *rel_path = NULL;
+
+    if (!file) return NULL;
+
+    path = g_file_peek_path(file);
+    if (!path) {
+        dyn_path = g_file_get_path(file);
+        path = dyn_path;
+    }
+    if (!path) return NULL;
+
+    last_slash = strrchr(path, '/');
+    if (!last_slash || last_slash == path) {
+        g_free(dyn_path);
+        return NULL;
+    }
+
+    /* Scan backwards segment by segment through directory components */
+    seg_end = last_slash;
+    while (seg_end > path) {
+        seg_start = seg_end - 1;
+        while (seg_start > path && *seg_start != '/') seg_start--;
+        if (*seg_start == '/') seg_start++;
+
+        if (seg_end > seg_start) {
+            char *seg_name = g_strndup(seg_start, seg_end - seg_start);
+            g_strstrip(seg_name);
+            if (is_pu_folder_name(seg_name)) {
+                pu_start = seg_start;
+                g_free(seg_name);
+                break;
+            }
+            g_free(seg_name);
+        }
+
+        if (seg_start <= path + 1) break;
+        seg_end = seg_start - 1;
+    }
+
+    if (pu_start && last_slash > pu_start) {
+        rel_path = g_strndup(pu_start, last_slash - pu_start);
+    } else {
+        rel_path = stampy_get_pu_code_for_file(file);
+    }
+
+    g_free(dyn_path);
+    return rel_path;
+}
+
+/* Fast natural compare of two strings without heap allocations.
+ * Correctly sorts: "PU III.3" < "PU III.12", "2.jpg" < "10.jpg". */
+int stampy_natural_strcasecmp(const char *a, const char *b) {
+    if (!a) return b ? -1 : 0;
+    if (!b) return 1;
+
+    while (*a && *b) {
+        if (g_ascii_isdigit(*a) && g_ascii_isdigit(*b)) {
+            guint64 na = 0, nb = 0;
+            while (g_ascii_isdigit(*a)) {
+                na = na * 10 + (*a - '0');
+                a++;
+            }
+            while (g_ascii_isdigit(*b)) {
+                nb = nb * 10 + (*b - '0');
+                b++;
+            }
+            if (na != nb) return na < nb ? -1 : 1;
+        } else {
+            char ca = g_ascii_tolower(*a);
+            char cb = g_ascii_tolower(*b);
+            if (ca != cb) return (unsigned char)ca - (unsigned char)cb;
+            a++;
+            b++;
+        }
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+/* Natural sort for GPtrArray<GFile *>; keeps PU folders and their images in
+ * human order ("PU III.3" before "PU III.12", "2.jpg" before "10.jpg"). */
+int stampy_compare_files_naturally(gconstpointer a, gconstpointer b) {
+    GFile *file_a = *(GFile * const *)a;
+    GFile *file_b = *(GFile * const *)b;
+    const char *path_a, *path_b;
+
+    if (!file_a) return file_b ? -1 : 0;
+    if (!file_b) return 1;
+
+    path_a = g_file_peek_path(file_a);
+    path_b = g_file_peek_path(file_b);
+
+    return stampy_natural_strcasecmp(path_a ? path_a : "", path_b ? path_b : "");
+}
+
 /* Normalizes a raw azimuth value into the [0, 360) range. */
 static double parse_clean_azimuth_from_excel(double raw_azh) {
     double val = fabs(raw_azh);
@@ -142,9 +374,11 @@ void format_geolocation_text(const GeolocationEntry *entry, char *lat_str, char 
     }
 }
 
-/* Looks up geolocation data. Only runs when an XLSX file is loaded. */
-gboolean stampy_lookup_geolocation_data(StampyWindow *self, int photo_id, GeolocationEntry *out_entry) {
+/* Looks up geolocation data by composite (PU, No) key. Only runs when an XLSX
+ * file is loaded. Falls back to the legacy No-only key for older sheets. */
+gboolean stampy_lookup_geolocation_data(StampyWindow *self, const char *pu_code, int photo_id, GeolocationEntry *out_entry) {
     gpointer val = NULL;
+    char *key;
     char id_str[64];
 
     /* Only proceed if an XLSX file was explicitly loaded. */
@@ -152,9 +386,15 @@ gboolean stampy_lookup_geolocation_data(StampyWindow *self, int photo_id, Geoloc
         return FALSE;
     }
 
-    /* Hash keys are strings, so convert the numeric id first. */
-    snprintf(id_str, sizeof(id_str), "%d", photo_id);
-    val = g_hash_table_lookup(self->geo_table, id_str);
+    key = stampy_make_geo_key(pu_code, photo_id);
+    val = g_hash_table_lookup(self->geo_table, key);
+    g_free(key);
+
+    /* Backward compatibility: id-only keys from legacy spreadsheets. */
+    if (!val) {
+        snprintf(id_str, sizeof(id_str), "%d", photo_id);
+        val = g_hash_table_lookup(self->geo_table, id_str);
+    }
 
     if (!val) {
         snprintf(id_str, sizeof(id_str), "%d.0", photo_id);
@@ -175,6 +415,10 @@ void stampy_invalidate_docx_cache(StampyWindow *self) {
     if (self->docx_cached_lines) {
         g_strfreev(self->docx_cached_lines);
         self->docx_cached_lines = NULL;
+    }
+    if (self->docx_table) {
+        g_hash_table_destroy(self->docx_table);
+        self->docx_table = NULL;
     }
     if (self->docx_cached_path) {
         g_free(self->docx_cached_path);
@@ -276,96 +520,173 @@ static char **load_docx_lines(StampyWindow *self) {
     return self->docx_cached_lines;
 }
 
-/* Looks up watermark text and azimuth for a photo id in the loaded DOCX. */
-gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char **out_text, char **out_azimuth) {
+static gboolean docx_line_is_pure_id(const char *line) {
+    gboolean has_digit = FALSE;
+    const char *p;
+
+    if (!line) return FALSE;
+    for (p = line; *p; p++) {
+        if (g_ascii_isdigit(*p)) {
+            has_digit = TRUE;
+        } else if (!g_ascii_isspace(*p)) {
+            return FALSE;
+        }
+    }
+    return has_digit;
+}
+
+static gboolean docx_line_is_index_number(const char *line) {
+    if (!line) return FALSE;
+    return g_ascii_strncasecmp(line, "Index number:", 13) == 0 ||
+           g_ascii_strncasecmp(line, "Index:", 6) == 0;
+}
+
+/* PU code is the line immediately above "Index number:" inside a block. */
+static char *docx_block_pu_code(char **lines, int id_index) {
+    int j;
+
+    for (j = id_index + 1; lines[j] != NULL; j++) {
+        if (docx_line_is_pure_id(lines[j])) break;
+        if (lines[j + 1] && docx_line_is_index_number(lines[j + 1])) {
+            return g_strdup(lines[j]);
+        }
+    }
+
+    return NULL;
+}
+
+static void docx_collect_block(char **lines, int id_index, char **out_text, char **out_azimuth) {
+    GString *result_text = g_string_new("");
+    int j = id_index + 1;
+    int count = 0;
+
+    while (lines[j] != NULL && count < 32) {
+        if (docx_line_is_pure_id(lines[j])) break;
+
+        if (count > 0) g_string_append_c(result_text, '\n');
+        g_string_append(result_text, lines[j]);
+        count++;
+        j++;
+    }
+
+    if (out_text) {
+        *out_text = g_string_free(result_text, FALSE);
+    } else {
+        g_string_free(result_text, TRUE);
+    }
+
+    if (out_azimuth) {
+        *out_azimuth = (count >= 2 && lines[id_index + 2]) ? g_strdup(lines[id_index + 2]) : g_strdup("");
+    }
+}
+
+typedef struct {
+    char *text;
+    char *azimuth;
+} DocxBlockEntry;
+
+static void docx_block_entry_free(gpointer data) {
+    DocxBlockEntry *e = (DocxBlockEntry *)data;
+    if (e) {
+        g_free(e->text);
+        g_free(e->azimuth);
+        g_free(e);
+    }
+}
+
+/* Builds an in-memory hash index of the DOCX once, enabling O(1) lookups. */
+static void ensure_docx_index(StampyWindow *self) {
     char **lines;
-    char *target_id = NULL;
-    int i = 0;
-    gboolean found = FALSE;
+    int i;
+
+    if (!self || self->docx_table) return;
+
+    lines = load_docx_lines(self);
+    if (!lines) return;
+
+    self->docx_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, docx_block_entry_free);
+
+    for (i = 0; lines[i] != NULL; i++) {
+        char *line_id;
+        int photo_id;
+        char *block_pu;
+        char *custom_text = NULL;
+        char *azimuth_str = NULL;
+        DocxBlockEntry *entry;
+        char *key;
+        char id_str[64];
+
+        if (!docx_line_is_pure_id(lines[i])) continue;
+
+        line_id = extract_pure_id(lines[i]);
+        if (!line_id) continue;
+        photo_id = atoi(line_id);
+        g_free(line_id);
+
+        if (photo_id <= 0) continue;
+
+        block_pu = docx_block_pu_code(lines, i);
+        docx_collect_block(lines, i, &custom_text, &azimuth_str);
+
+        entry = g_new0(DocxBlockEntry, 1);
+        entry->text = custom_text;
+        entry->azimuth = azimuth_str;
+
+        /* Insert primary composite key */
+        key = stampy_make_geo_key(block_pu, photo_id);
+        g_hash_table_insert(self->docx_table, key, entry);
+
+        /* Insert legacy id-only fallback if not already present */
+        snprintf(id_str, sizeof(id_str), "%d", photo_id);
+        if (!g_hash_table_contains(self->docx_table, id_str)) {
+            DocxBlockEntry *fallback_entry = g_new0(DocxBlockEntry, 1);
+            fallback_entry->text = g_strdup(entry->text);
+            fallback_entry->azimuth = g_strdup(entry->azimuth);
+            g_hash_table_insert(self->docx_table, g_strdup(id_str), fallback_entry);
+        }
+
+        g_free(block_pu);
+    }
+}
+
+/* Looks up watermark text and azimuth for a (PU, No) photo via O(1) hash table. */
+gboolean stampy_lookup_docx_data(StampyWindow *self, const char *pu_code, const char *photo_id, char **out_text, char **out_azimuth) {
+    DocxBlockEntry *entry = NULL;
+    char *target_id_str = NULL;
+    int photo_id_val;
+    char *key;
+    char id_str[64];
 
     if (!self || !self->file_watermark || !photo_id) return FALSE;
 
-    target_id = extract_pure_id(photo_id);
-    if (!target_id) return FALSE;
+    ensure_docx_index(self);
+    if (!self->docx_table) return FALSE;
 
-    lines = load_docx_lines(self);
-    if (!lines) {
-        g_free(target_id);
-        return FALSE;
+    target_id_str = extract_pure_id(photo_id);
+    if (!target_id_str) return FALSE;
+    photo_id_val = atoi(target_id_str);
+    g_free(target_id_str);
+
+    if (photo_id_val <= 0) return FALSE;
+
+    /* 1. Try composite (PU, No) key */
+    key = stampy_make_geo_key(pu_code, photo_id_val);
+    entry = (DocxBlockEntry *)g_hash_table_lookup(self->docx_table, key);
+    g_free(key);
+
+    /* 2. Fallback to No-only key for legacy documents */
+    if (!entry) {
+        snprintf(id_str, sizeof(id_str), "%d", photo_id_val);
+        entry = (DocxBlockEntry *)g_hash_table_lookup(self->docx_table, id_str);
     }
 
-    /* Find the id, then collect following lines until the next id block. */
-    while (lines[i] != NULL) {
-        char *line_id = extract_pure_id(lines[i]);
-
-        if (line_id && g_strcmp0(line_id, target_id) == 0) {
-            /* Skip description lines that merely contain the id digits. */
-            gboolean is_pure_id = TRUE;
-            const char *p;
-            for (p = lines[i]; *p; p++) {
-                if (!g_ascii_isdigit(*p) && !g_ascii_isspace(*p)) {
-                    is_pure_id = FALSE;
-                    break;
-                }
-            }
-
-            if (!is_pure_id) {
-                g_free(line_id);
-                i++;
-                continue;
-            }
-
-            /* Collect following lines until the next photo id block. */
-            {
-                GString *result_text = g_string_new("");
-                int j = i + 1;
-                int count = 0;
-
-                while (lines[j] != NULL && count < 32) {
-                    gboolean has_digit = FALSE;
-                    gboolean only_digits_and_spaces = TRUE;
-                    for (p = lines[j]; *p; p++) {
-                        if (g_ascii_isdigit(*p)) {
-                            has_digit = TRUE;
-                        } else if (!g_ascii_isspace(*p)) {
-                            only_digits_and_spaces = FALSE;
-                            break;
-                        }
-                    }
-
-                    if (has_digit && only_digits_and_spaces) {
-                        break;
-                    }
-
-                    if (count > 0) {
-                        g_string_append_c(result_text, '\n');
-                    }
-                    g_string_append(result_text, lines[j]);
-                    count++;
-                    j++;
-                }
-
-                if (out_text) {
-                    *out_text = g_string_free(result_text, FALSE);
-                } else {
-                    g_string_free(result_text, TRUE);
-                }
-
-                if (out_azimuth) {
-                    *out_azimuth = (count >= 2 && lines[i+2]) ? g_strdup(lines[i+2]) : g_strdup("");
-                }
-
-                found = TRUE;
-                g_free(line_id);
-                break;
-            }
-        }
-        g_free(line_id);
-        i++;
+    if (entry) {
+        if (out_text) *out_text = g_strdup(entry->text);
+        if (out_azimuth) *out_azimuth = g_strdup(entry->azimuth);
+        return TRUE;
     }
 
-    g_free(target_id);
-    return found;
+    return FALSE;
 }
 
 /* Extracts project description text from full DOCX watermark text.
@@ -590,6 +911,26 @@ void stampy_populate_system_fonts(StampyWindow *self) {
     gtk_drop_down_set_model(GTK_DROP_DOWN(self->drop_text_font), G_LIST_MODEL(string_list));
 }
 
+static gboolean is_export_output_dir_name(const char *name) {
+    size_t len;
+    if (!name) return FALSE;
+    len = strlen(name);
+    if (len < 8) return FALSE;
+    return (g_ascii_strcasecmp(name + len - 8, "_stamped") == 0);
+}
+
+static gboolean is_compass_dir_name(const char *name) {
+    const char *p;
+    if (!name) return FALSE;
+    for (p = name; *p; p++) {
+        if (g_ascii_strncasecmp(p, "kompas", 6) == 0 ||
+            g_ascii_strncasecmp(p, "compass", 7) == 0) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 /* Adds an image file, recursing into directories and skipping duplicates. */
 void stampy_add_file_or_directory(StampyWindow *self, GFile *file, int *added_count) {
     GFileType type;
@@ -607,7 +948,10 @@ void stampy_add_file_or_directory(StampyWindow *self, GFile *file, int *added_co
             GFileInfo *info;
             while ((info = g_file_enumerator_next_file(enumerator, NULL, NULL)) != NULL) {
                 const char *name = g_file_info_get_name(info);
-                if (name && *name != '.') {
+                GFileType child_type = g_file_info_get_file_type(info);
+                if (name && *name != '.' &&
+                    !(child_type == G_FILE_TYPE_DIRECTORY &&
+                      (is_export_output_dir_name(name) || is_compass_dir_name(name)))) {
                     GFile *child = g_file_get_child(file, name);
                     stampy_add_file_or_directory(self, child, added_count);
                     g_object_unref(child);
@@ -710,8 +1054,17 @@ void stampy_auto_detect_companion_files(StampyWindow *self, GSList *files) {
 
             if (name) {
                 char *lower = g_utf8_strdown(name, -1);
+                GFileType child_type = g_file_info_get_file_type(info);
 
-                if (g_str_has_suffix(lower, ".docx") && !self->file_watermark) {
+                if (child_type == G_FILE_TYPE_DIRECTORY &&
+                    !self->file_compass &&
+                    is_compass_dir_name(name)) {
+                    self->file_compass = g_file_get_child(dir, name);
+                    if (self->lbl_compass)
+                        gtk_label_set_text(GTK_LABEL(self->lbl_compass), name);
+                    stampy_append_log(self, "[INFO] Compass folder auto-detected.");
+                    changed = TRUE;
+                } else if (g_str_has_suffix(lower, ".docx") && !self->file_watermark) {
                     self->file_watermark = g_file_get_child(dir, name);
                     if (self->lbl_watermark)
                         gtk_label_set_text(GTK_LABEL(self->lbl_watermark), name);
@@ -974,6 +1327,7 @@ void stampy_check_missing_data(StampyWindow *self) {
         GFile *file = g_ptr_array_index(self->image_files, i);
         const char *path = g_file_peek_path(file);
         const char *name;
+        char *pu_code;
         int pid;
         gboolean m_id;
         gboolean m_gps = FALSE;
@@ -982,20 +1336,22 @@ void stampy_check_missing_data(StampyWindow *self) {
         if (!path) continue;
         name = strrchr(path, '/');
         name = name ? name + 1 : path;
+        pu_code = stampy_get_pu_code_for_file(file);
         pid = stampy_extract_id_from_filename(name);
         m_id = (pid <= 0);
 
         if (has_geo_expected) {
-            if (m_id || !stampy_lookup_geolocation_data(self, pid, NULL)) {
+            if (m_id || !stampy_lookup_geolocation_data(self, pu_code, pid, NULL)) {
                 m_gps = TRUE;
             }
         }
 
         if (has_wm_expected) {
-            if (m_id || !stampy_lookup_docx_data(self, name, NULL, NULL)) {
+            if (m_id || !stampy_lookup_docx_data(self, pu_code, name, NULL, NULL)) {
                 m_wm = TRUE;
             }
         }
+        g_free(pu_code);
 
         if (m_gps || m_wm || m_id) {
             MissingDataItem *item = g_new0(MissingDataItem, 1);
@@ -1469,25 +1825,18 @@ static void on_images_opened(GObject *source, GAsyncResult *res, gpointer user_d
 
     if (files && self) {
         guint n_items = g_list_model_get_n_items(files);
-        int added = 0;
+        GSList *file_list = NULL;
 
         for (guint i = 0; i < n_items; i++) {
             GFile *file = g_list_model_get_item(files, i);
-            stampy_add_file_or_directory(self, file, &added);
-            g_object_unref(file);
+            if (file) file_list = g_slist_prepend(file_list, file);
         }
         g_object_unref(files);
 
-        if (added > 0) {
-            stampy_auto_detect_companion_files(self, NULL);
-            if (self->image_files->len > 0)
-                stampy_set_import_root(self, g_ptr_array_index(self->image_files, 0));
-            stampy_prepare_default_export_folder(self);
-            stampy_populate_file_listbox(self);
-            stampy_render_live_preview(self);
-            stampy_show_toast(self, "Images imported successfully!");
-            stampy_append_log(self, "[INFO] Images imported successfully.");
-            stampy_update_clear_button_visibility(self);
+        if (file_list) {
+            file_list = g_slist_reverse(file_list);
+            stampy_add_image_files(self, file_list);
+            g_slist_free_full(file_list, g_object_unref);
         }
     }
 }

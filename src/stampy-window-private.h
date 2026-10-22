@@ -9,6 +9,7 @@ G_DECLARE_FINAL_TYPE(StampyWindow, stampy_window, STAMPY, WINDOW, AdwApplication
 
 typedef struct {
     int no;
+    char pu_code[64];  /* Group code from XLSX column B / DOCX block */
     double longitude;
     double latitude;
     double azimuth_raw;
@@ -22,6 +23,8 @@ struct _StampyWindow {
     GtkWidget *toast_overlay;
     GtkWidget *left_stack;
     GtkWidget *drop_area_frame;
+    GtkWidget *box_pu_selector;
+    GtkWidget *drop_pu_folder;
     GtkWidget *file_listbox;
 
     GtkWidget *btn_compass;
@@ -108,6 +111,7 @@ struct _StampyWindow {
     char *critical_coords_details;
     char *docx_cached_path;
     char **docx_cached_lines;
+    GHashTable *docx_table;
     GCancellable *scan_cancel;
     guint scan_pulse_id;
     guint scan_generation;
@@ -120,6 +124,8 @@ struct _StampyWindow {
     GHashTable *scan_cache_dirs;
     GtkWidget *listbox_popover;
     gboolean has_active_status_line;
+    GPtrArray *pu_folders;
+    char *selected_pu_folder;
 };
 
 /* Window setup. */
@@ -142,7 +148,9 @@ void stampy_toggle_compass_lock(StampyWindow *self);
 
 /* List and panel helpers. */
 void stampy_populate_system_fonts(StampyWindow *self);
+void stampy_populate_pu_dropdown(StampyWindow *self);
 void stampy_populate_file_listbox(StampyWindow *self);
+void stampy_add_image_files(StampyWindow *self, GSList *files);
 void stampy_add_file_or_directory(StampyWindow *self, GFile *file, int *added_count);
 void stampy_append_log(StampyWindow *self, const char *message);
 void stampy_update_status_line(StampyWindow *self, const char *message);
@@ -214,9 +222,14 @@ void stampy_geo_csv_append_row(FILE *fp, const char *exported_path, const Geoloc
 void stampy_geo_csv_close(FILE *fp);
 
 /* DOCX/XLSX data lookups. */
-gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char **out_text, char **out_azimuth);
-gboolean stampy_lookup_geolocation_data(StampyWindow *self, int photo_id, GeolocationEntry *out_entry);
+char *stampy_make_geo_key(const char *pu_code, int photo_id);
+gboolean stampy_lookup_docx_data(StampyWindow *self, const char *pu_code, const char *photo_id, char **out_text, char **out_azimuth);
+gboolean stampy_lookup_geolocation_data(StampyWindow *self, const char *pu_code, int photo_id, GeolocationEntry *out_entry);
 void format_geolocation_text(const GeolocationEntry *entry, char *lat_str, char *lon_str, double *compass_deg);
+char *stampy_get_pu_code_for_file(GFile *file);
+char *stampy_get_pu_rel_subpath_for_file(GFile *file);
+int stampy_natural_strcasecmp(const char *a, const char *b);
+int stampy_compare_files_naturally(gconstpointer a, gconstpointer b);
 /* Extracts project description text (between azimuth and "Index number:") from DOCX watermark text. */
 gboolean stampy_extract_project_description(const char *full_text, char **out_text);
 /* Extracts date "Kamis, 23 Juli 2026" → "2026:07:23" from DOCX watermark text. */

@@ -9,6 +9,7 @@ G_DECLARE_FINAL_TYPE(StampyWindow, stampy_window, STAMPY, WINDOW, AdwApplication
 
 typedef struct {
     int no;
+    char pu_code[64]; /* Group code from column B */
     double longitude; /* Column X */
     double latitude;  /* Column Y */
     double azimuth_raw;  /* Column Azh */
@@ -104,8 +105,9 @@ void stampy_load_last_state(StampyWindow *self);
 void stampy_set_progress(StampyWindow *self, double fraction, gboolean visible);
 
 /* DOCX/XLSX data lookups. */
-gboolean stampy_lookup_docx_data(StampyWindow *self, const char *photo_id, char **out_text, char **out_azimuth);
-gboolean stampy_lookup_geolocation_data(StampyWindow *self, int photo_id, GeolocationEntry *out_entry);
+gboolean stampy_lookup_docx_data(StampyWindow *self, const char *pu_code, const char *photo_id, char **out_text, char **out_azimuth);
+gboolean stampy_lookup_geolocation_data(StampyWindow *self, const char *pu_code, int photo_id, GeolocationEntry *out_entry);
 void format_geolocation_text(const GeolocationEntry *entry, char *lat_str, char *lon_str, double *compass_deg);
+char *stampy_get_pu_code_for_file(GFile *file);
 
 G_END_DECLS
