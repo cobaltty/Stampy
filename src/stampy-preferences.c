@@ -494,9 +494,8 @@ on_title_exp_toggle_changed (GObject *object, GParamSpec *pspec, gpointer user_d
 
   active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
   stampy_config_set_bool (STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, active);
-  if (self != NULL && self->btn_metadata_inject != NULL &&
-      gtk_switch_get_active (GTK_SWITCH (self->btn_metadata_inject)) != active)
-    gtk_switch_set_active (GTK_SWITCH (self->btn_metadata_inject), active);
+  if (self != NULL)
+    stampy_render_live_preview (self);
 }
 
 void
@@ -514,8 +513,6 @@ on_xlsx_time_exif_toggled (GObject *object, GParamSpec *pspec, gpointer user_dat
     active = gtk_switch_get_active (GTK_SWITCH (object));
   stampy_config_set_bool (STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, active);
 
-  if (self != NULL && self->btn_xlsx_time_exif != NULL &&
-      GTK_WIDGET (self->btn_xlsx_time_exif) != GTK_WIDGET (object) &&
-      gtk_switch_get_active (GTK_SWITCH (self->btn_xlsx_time_exif)) != active)
-    gtk_switch_set_active (GTK_SWITCH (self->btn_xlsx_time_exif), active);
+  if (self != NULL)
+    stampy_render_live_preview (self);
 }

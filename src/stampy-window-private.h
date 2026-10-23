@@ -45,6 +45,9 @@ struct _StampyWindow {
     GtkWidget *btn_c_shadow;
     GtkWidget *btn_c_stroke;
     GtkWidget *btn_c_stroke_color;
+    GtkWidget *val_c_stroke_width;
+    GtkWidget *val_c_shadow_width;
+    GtkWidget *btn_c_shadow_color;
 
     GtkWidget *drop_text_pos;
     GtkWidget *drop_text_font;
@@ -62,6 +65,9 @@ struct _StampyWindow {
     GtkWidget *btn_t_shadow;
     GtkWidget *btn_t_stroke;
     GtkWidget *btn_t_stroke_color;
+    GtkWidget *val_t_stroke_width;
+    GtkWidget *val_t_shadow_width;
+    GtkWidget *btn_t_shadow_color;
     GtkWidget *btn_t_color;
 
     /* Preset Widgets */
@@ -72,9 +78,6 @@ struct _StampyWindow {
     GtkWidget *btn_apply_preset;
     GtkWidget *btn_import_preset;
     GtkWidget *btn_export_preset;
-
-    GtkWidget *btn_metadata_inject;
-    GtkWidget *btn_xlsx_time_exif;
 
     GtkWidget *btn_menu;
     GtkWidget *btn_header_clear;
@@ -123,6 +126,7 @@ struct _StampyWindow {
     GPtrArray *scan_cache_sources;
     GHashTable *scan_cache_dirs;
     GtkWidget *listbox_popover;
+    GtkWidget *active_hover_popover;
     gboolean has_active_status_line;
     GPtrArray *pu_folders;
     char *selected_pu_folder;
@@ -148,6 +152,7 @@ void stampy_toggle_compass_lock(StampyWindow *self);
 
 /* List and panel helpers. */
 void stampy_populate_system_fonts(StampyWindow *self);
+void stampy_setup_hover_effect_popovers(StampyWindow *self);
 void stampy_populate_pu_dropdown(StampyWindow *self);
 void stampy_populate_file_listbox(StampyWindow *self);
 void stampy_add_image_files(StampyWindow *self, GSList *files);

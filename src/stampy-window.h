@@ -40,6 +40,9 @@ struct _StampyWindow {
     GtkWidget *btn_c_shadow;
     GtkWidget *btn_c_stroke;
     GtkWidget *btn_c_stroke_color;
+    GtkWidget *val_c_stroke_width;
+    GtkWidget *val_c_shadow_width;
+    GtkWidget *btn_c_shadow_color;
 
     GtkWidget *drop_text_pos;
     GtkWidget *drop_text_font;
@@ -56,6 +59,9 @@ struct _StampyWindow {
     GtkWidget *btn_t_shadow;
     GtkWidget *btn_t_stroke;
     GtkWidget *btn_t_stroke_color;
+    GtkWidget *val_t_stroke_width;
+    GtkWidget *val_t_shadow_width;
+    GtkWidget *btn_t_shadow_color;
     GtkWidget *btn_t_color;
 
     /* Preset Widgets */

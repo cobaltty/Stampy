@@ -279,10 +279,6 @@ static void stampy_window_class_init(StampyWindowClass *klass) {
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_import_preset);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_export_preset);
 
-    gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_metadata_inject);
-
-    gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_xlsx_time_exif);
-
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_menu);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_header_clear);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, btn_header_export);
@@ -465,14 +461,7 @@ static void stampy_window_init(StampyWindow *self) {
     stampy_setup_file_handlers_and_dnd(self);
     stampy_connect_export_logic(self);
 
-    /* Keep the panel switches aligned with the persisted preferences. */
-    if (self->btn_metadata_inject)
-        gtk_switch_set_active(GTK_SWITCH(self->btn_metadata_inject),
-            stampy_config_get_bool(STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, FALSE));
-    if (self->btn_xlsx_time_exif)
-        gtk_switch_set_active(GTK_SWITCH(self->btn_xlsx_time_exif),
-            stampy_config_get_bool(STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE));
-
+    stampy_setup_hover_effect_popovers(self);
     stampy_connect_panel_signals(self);
     stampy_populate_system_fonts(self);
 

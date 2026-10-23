@@ -80,12 +80,18 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
     const char *c_pos, *t_pos, *t_font = "Arial", *t_align;
     g_autofree char *json_data = NULL;
     g_autofree char *color_hex_c_stroke = NULL;
+    g_autofree char *color_hex_c_shadow = NULL;
     g_autofree char *color_hex_t_stroke = NULL;
+    g_autofree char *color_hex_t_shadow = NULL;
     g_autofree char *color_hex_t_color = NULL;
     GError *error = NULL;
     GdkRGBA rgba;
     guint c_idx, t_idx;
     double t_spacing = 12.0;
+    double t_stroke_w = self->val_t_stroke_width ? gtk_range_get_value(GTK_RANGE(self->val_t_stroke_width)) : 2.5;
+    double t_shadow_w = self->val_t_shadow_width ? gtk_range_get_value(GTK_RANGE(self->val_t_shadow_width)) : 2.0;
+    double c_stroke_w = self->val_c_stroke_width ? gtk_range_get_value(GTK_RANGE(self->val_c_stroke_width)) : 2.0;
+    double c_shadow_w = self->val_c_shadow_width ? gtk_range_get_value(GTK_RANGE(self->val_c_shadow_width)) : 4.0;
 
     if (!self || !filepath) return;
 
@@ -120,31 +126,61 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(self->btn_c_stroke_color), &rgba);
-    color_hex_c_stroke = g_strdup_printf("#%02X%02X%02X", (int)(rgba.red * 255), (int)(rgba.green * 255), (int)(rgba.blue * 255));
+    if (self->btn_c_stroke_color) {
+        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(self->btn_c_stroke_color), &rgba);
+        color_hex_c_stroke = g_strdup_printf("#%02X%02X%02X", (int)(rgba.red * 255), (int)(rgba.green * 255), (int)(rgba.blue * 255));
+    } else {
+        color_hex_c_stroke = g_strdup("#000000");
+    }
 
-    gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(self->btn_t_stroke_color), &rgba);
-    color_hex_t_stroke = g_strdup_printf("#%02X%02X%02X", (int)(rgba.red * 255), (int)(rgba.green * 255), (int)(rgba.blue * 255));
+    if (self->btn_c_shadow_color) {
+        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(self->btn_c_shadow_color), &rgba);
+        color_hex_c_shadow = g_strdup_printf("#%02X%02X%02X", (int)(rgba.red * 255), (int)(rgba.green * 255), (int)(rgba.blue * 255));
+    } else {
+        color_hex_c_shadow = g_strdup("#000000");
+    }
 
-    gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(self->btn_t_color), &rgba);
-    color_hex_t_color = g_strdup_printf("#%02X%02X%02X", (int)(rgba.red * 255), (int)(rgba.green * 255), (int)(rgba.blue * 255));
+    if (self->btn_t_stroke_color) {
+        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(self->btn_t_stroke_color), &rgba);
+        color_hex_t_stroke = g_strdup_printf("#%02X%02X%02X", (int)(rgba.red * 255), (int)(rgba.green * 255), (int)(rgba.blue * 255));
+    } else {
+        color_hex_t_stroke = g_strdup("#000000");
+    }
+
+    if (self->btn_t_shadow_color) {
+        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(self->btn_t_shadow_color), &rgba);
+        color_hex_t_shadow = g_strdup_printf("#%02X%02X%02X", (int)(rgba.red * 255), (int)(rgba.green * 255), (int)(rgba.blue * 255));
+    } else {
+        color_hex_t_shadow = g_strdup("#000000");
+    }
+
+    if (self->btn_t_color) {
+        gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(self->btn_t_color), &rgba);
+        color_hex_t_color = g_strdup_printf("#%02X%02X%02X", (int)(rgba.red * 255), (int)(rgba.green * 255), (int)(rgba.blue * 255));
+    } else {
+        color_hex_t_color = g_strdup("#FFFFFF");
+    }
 #pragma GCC diagnostic pop
 
     json_data = g_strdup_printf(
         "{\n"
         "  \"c_size\": %d,\n  \"c_margin_x\": %.1f,\n  \"c_margin_y\": %.1f,\n  \"c_opacity\": %d,\n  \"c_pos\": \"%s\",\n"
-        "  \"c_shadow\": %s,\n  \"c_stroke\": %s,\n  \"c_stroke_color\": \"%s\",\n"
+        "  \"c_shadow\": %s,\n  \"c_shadow_color\": \"%s\",\n  \"c_shadow_width\": %.1f,\n"
+        "  \"c_stroke\": %s,\n  \"c_stroke_color\": \"%s\",\n  \"c_stroke_width\": %.1f,\n"
         "  \"t_size\": %.1f,\n  \"t_spacing\": %.1f,\n  \"t_margin_x\": %.1f,\n  \"t_margin_y\": %.1f,\n  \"t_opacity\": %d,\n  \"t_pos\": \"%s\",\n"
         "  \"t_font\": \"%s\",\n  \"t_align\": \"%s\",\n"
         "  \"t_bold\": %s,\n  \"t_italic\": %s,\n  \"t_underline\": %s,\n"
-        "  \"t_shadow\": %s,\n  \"t_stroke\": %s,\n  \"t_stroke_color\": \"%s\",\n  \"t_color\": \"%s\",\n  \"metadata_inject\": %s,\n  \"xlsx_time_exif\": %s\n}\n",
+        "  \"t_shadow\": %s,\n  \"t_shadow_color\": \"%s\",\n  \"t_shadow_width\": %.1f,\n"
+        "  \"t_stroke\": %s,\n  \"t_stroke_color\": \"%s\",\n  \"t_stroke_width\": %.1f,\n  \"t_color\": \"%s\",\n"
+        "  \"metadata_inject\": %s,\n  \"xlsx_time_exif\": %s\n}\n",
         (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_size)),
         gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_margin_x)),
         gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_margin_y)),
         (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_opacity)), c_pos,
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_c_shadow)) ? "true" : "false",
+        color_hex_c_shadow, c_shadow_w,
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_c_stroke)) ? "true" : "false",
-        color_hex_c_stroke,
+        color_hex_c_stroke, c_stroke_w,
         gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_text_size)),
         t_spacing,
         gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_text_margin_x)),
@@ -155,10 +191,11 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_t_italic)) ? "true" : "false",
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_t_underline)) ? "true" : "false",
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_t_shadow)) ? "true" : "false",
+        color_hex_t_shadow, t_shadow_w,
         gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(self->btn_t_stroke)) ? "true" : "false",
-        color_hex_t_stroke, color_hex_t_color,
-        gtk_switch_get_active(GTK_SWITCH(self->btn_metadata_inject)) ? "true" : "false",
-        gtk_switch_get_active(GTK_SWITCH(self->btn_xlsx_time_exif)) ? "true" : "false"
+        color_hex_t_stroke, t_stroke_w, color_hex_t_color,
+        stampy_config_get_bool(STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, FALSE) ? "true" : "false",
+        stampy_config_get_bool(STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE) ? "true" : "false"
     );
 
     if (!g_file_set_contents(filepath, json_data, -1, &error)) {
@@ -293,8 +330,8 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_t_underline), strstr(content, "\"t_underline\": true") != NULL);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_t_shadow), strstr(content, "\"t_shadow\": true") != NULL);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->btn_t_stroke), strstr(content, "\"t_stroke\": true") != NULL);
-    gtk_switch_set_active(GTK_SWITCH(self->btn_metadata_inject), strstr(content, "\"metadata_inject\": true") != NULL);
-    gtk_switch_set_active(GTK_SWITCH(self->btn_xlsx_time_exif), strstr(content, "\"xlsx_time_exif\": true") != NULL);
+    stampy_config_set_bool(STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, strstr(content, "\"metadata_inject\": true") != NULL);
+    stampy_config_set_bool(STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, strstr(content, "\"xlsx_time_exif\": true") != NULL);
 
     /* Text alignment. */
     if (strstr(content, "\"t_align\": \"left\"") || strstr(content, "\"alignment\": \"left\""))
@@ -307,19 +344,49 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
     /* Colors. */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-    if (strstr(content, "\"c_stroke_color\": \"")) {
+    if (strstr(content, "\"c_stroke_color\": \"") && self->btn_c_stroke_color) {
         sscanf(strstr(content, "\"c_stroke_color\": \""), "\"c_stroke_color\": \"%7s\"", hex);
         if (gdk_rgba_parse(&rgba, hex)) gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(self->btn_c_stroke_color), &rgba);
     }
-    if (strstr(content, "\"t_stroke_color\": \"")) {
+    if (strstr(content, "\"c_shadow_color\": \"") && self->btn_c_shadow_color) {
+        sscanf(strstr(content, "\"c_shadow_color\": \""), "\"c_shadow_color\": \"%7s\"", hex);
+        if (gdk_rgba_parse(&rgba, hex)) gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(self->btn_c_shadow_color), &rgba);
+    }
+    if (strstr(content, "\"t_stroke_color\": \"") && self->btn_t_stroke_color) {
         sscanf(strstr(content, "\"t_stroke_color\": \""), "\"t_stroke_color\": \"%7s\"", hex);
         if (gdk_rgba_parse(&rgba, hex)) gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(self->btn_t_stroke_color), &rgba);
     }
-    if (strstr(content, "\"t_color\": \"")) {
+    if (strstr(content, "\"t_shadow_color\": \"") && self->btn_t_shadow_color) {
+        sscanf(strstr(content, "\"t_shadow_color\": \""), "\"t_shadow_color\": \"%7s\"", hex);
+        if (gdk_rgba_parse(&rgba, hex)) gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(self->btn_t_shadow_color), &rgba);
+    }
+    if (strstr(content, "\"t_color\": \"") && self->btn_t_color) {
         sscanf(strstr(content, "\"t_color\": \""), "\"t_color\": \"%7s\"", hex);
         if (gdk_rgba_parse(&rgba, hex)) gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(self->btn_t_color), &rgba);
     }
 #pragma GCC diagnostic pop
+
+    /* Widths / Sliders */
+    if (strstr(content, "\"t_stroke_width\":") && self->val_t_stroke_width) {
+        double val = 2.5;
+        if (sscanf(strstr(content, "\"t_stroke_width\":"), "\"t_stroke_width\": %lf", &val) == 1)
+            gtk_range_set_value(GTK_RANGE(self->val_t_stroke_width), val);
+    }
+    if (strstr(content, "\"t_shadow_width\":") && self->val_t_shadow_width) {
+        double val = 2.0;
+        if (sscanf(strstr(content, "\"t_shadow_width\":"), "\"t_shadow_width\": %lf", &val) == 1)
+            gtk_range_set_value(GTK_RANGE(self->val_t_shadow_width), val);
+    }
+    if (strstr(content, "\"c_stroke_width\":") && self->val_c_stroke_width) {
+        double val = 2.0;
+        if (sscanf(strstr(content, "\"c_stroke_width\":"), "\"c_stroke_width\": %lf", &val) == 1)
+            gtk_range_set_value(GTK_RANGE(self->val_c_stroke_width), val);
+    }
+    if (strstr(content, "\"c_shadow_width\":") && self->val_c_shadow_width) {
+        double val = 4.0;
+        if (sscanf(strstr(content, "\"c_shadow_width\":"), "\"c_shadow_width\": %lf", &val) == 1)
+            gtk_range_set_value(GTK_RANGE(self->val_c_shadow_width), val);
+    }
 
     /* Refresh the preview. */
     stampy_render_live_preview(self);

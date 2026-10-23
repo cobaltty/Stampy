@@ -376,10 +376,10 @@
                                         <property name="spacing">8</property>
                                         <child>
                                           <object class="GtkBox">
-                                            <style><class name="linked"/></style>
-                                            <child><object class="GtkToggleButton" id="btn_c_shadow"><property name="icon-name">format-text-shadow-symbolic</property><property name="tooltip-text">Compass Shadow</property></object></child>
-                                            <child><object class="GtkToggleButton" id="btn_c_stroke"><property name="icon-name">format-text-outline-symbolic</property><property name="tooltip-text">Compass Stroke</property></object></child>
-                                          </object>
+                                             <style><class name="linked"/></style>
+                                             <child><object class="GtkToggleButton" id="btn_c_shadow"><property name="icon-name">format-text-shadow-symbolic</property></object></child>
+                                             <child><object class="GtkToggleButton" id="btn_c_stroke"><property name="icon-name">format-text-outline-symbolic</property></object></child>
+                                           </object>
                                         </child>
                                         <child><object class="GtkColorButton" id="btn_c_stroke_color"><property name="tooltip-text">Compass Stroke Color</property><property name="rgba">rgb(0,0,0)</property></object></child>
                                         <child><object class="GtkBox"><property name="hexpand">true</property></object></child>
@@ -389,15 +389,15 @@
                                            <object class="GtkBox">
                                              <property name="spacing">4</property>
                                              <child><object class="GtkImage"><property name="icon-name">expand-horizontal-symbolic</property><property name="tooltip-text">Margin X (px)</property><style><class name="dim-label"/></style></object></child>
-                                             <child><object class="GtkSpinButton" id="val_compass_margin_x"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">500</property><property name="step-increment">0.5</property><property name="page-increment">5</property></object></property><property name="value">20</property></object></child>
-                                           </object>
-                                         </child>
-                                         <!-- Margin Y -->
-                                         <child>
-                                           <object class="GtkBox">
-                                             <property name="spacing">4</property>
-                                             <child><object class="GtkImage"><property name="icon-name">expand-vertical-symbolic</property><property name="tooltip-text">Margin Y (px)</property><style><class name="dim-label"/></style></object></child>
-                                             <child><object class="GtkSpinButton" id="val_compass_margin_y"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">500</property><property name="step-increment">0.5</property><property name="page-increment">5</property></object></property><property name="value">20</property></object></child>
+                                              <child><object class="GtkSpinButton" id="val_compass_margin_x"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">500</property><property name="step-increment">0.1</property><property name="page-increment">1</property></object></property><property name="value">20</property></object></child>
+                                            </object>
+                                          </child>
+                                          <!-- Margin Y -->
+                                          <child>
+                                            <object class="GtkBox">
+                                              <property name="spacing">4</property>
+                                              <child><object class="GtkImage"><property name="icon-name">expand-vertical-symbolic</property><property name="tooltip-text">Margin Y (px)</property><style><class name="dim-label"/></style></object></child>
+                                              <child><object class="GtkSpinButton" id="val_compass_margin_y"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">500</property><property name="step-increment">0.1</property><property name="page-increment">1</property></object></property><property name="value">20</property></object></child>
                                            </object>
                                          </child>
                                         <!-- Opacity -->
@@ -442,42 +442,42 @@
                                               <child><object class="GtkToggleButton" id="btn_t_align_right"><property name="icon-name">format-justify-right-symbolic</property><property name="group">btn_t_align_left</property><property name="active">true</property></object></child>
                                             </object>
                                           </child>
-                                          <!-- Text size -->
-                                          <child>
-                                            <object class="GtkSpinButton" id="val_text_size"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">1</property><property name="upper">200</property><property name="step-increment">0.5</property><property name="page-increment">5</property></object></property><property name="value">29</property></object>
-                                          </child>
-                                        </object>
-                                     </child>
+                                           <!-- Text size -->
+                                           <child>
+                                             <object class="GtkSpinButton" id="val_text_size"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">1</property><property name="upper">200</property><property name="step-increment">0.1</property><property name="page-increment">1</property></object></property><property name="value">29</property></object>
+                                           </child>
+                                         </object>
+                                      </child>
 
-                                     <!-- Text row 2 -->
-                                     <child>
-                                       <object class="GtkBox">
-                                         <property name="spacing">8</property>
-                                         <child><object class="GtkBox"><property name="hexpand">true</property></object></child>
-                                         <!-- Line spacing -->
-                                         <child>
-                                           <object class="GtkBox">
-                                             <property name="spacing">4</property>
-                                             <child><object class="GtkImage"><property name="icon-name">format-line-spacing-symbolic</property><property name="tooltip-text">Line Spacing (px)</property><style><class name="dim-label"/></style></object></child>
-                                              <child><object class="GtkSpinButton" id="val_text_spacing"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">-100</property><property name="upper">200</property><property name="step-increment">0.5</property><property name="page-increment">5</property></object></property><property name="value">12</property></object></child>
-                                           </object>
-                                         </child>
-                                         <!-- Text margin X -->
-                                         <child>
-                                           <object class="GtkBox">
-                                             <property name="spacing">4</property>
-                                             <child><object class="GtkImage"><property name="icon-name">expand-horizontal-symbolic</property><property name="tooltip-text">Margin X (px)</property><style><class name="dim-label"/></style></object></child>
-                                             <child><object class="GtkSpinButton" id="val_text_margin_x"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">500</property><property name="step-increment">0.5</property><property name="page-increment">5</property></object></property><property name="value">20</property></object></child>
-                                           </object>
-                                         </child>
-                                         <!-- Text margin Y -->
-                                         <child>
-                                           <object class="GtkBox">
-                                             <property name="spacing">4</property>
-                                             <child><object class="GtkImage"><property name="icon-name">expand-vertical-symbolic</property><property name="tooltip-text">Margin Y (px)</property><style><class name="dim-label"/></style></object></child>
-                                             <child><object class="GtkSpinButton" id="val_text_margin_y"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">500</property><property name="step-increment">0.5</property><property name="page-increment">5</property></object></property><property name="value">20</property></object></child>
-                                           </object>
-                                         </child>
+                                      <!-- Text row 2 -->
+                                      <child>
+                                        <object class="GtkBox">
+                                          <property name="spacing">8</property>
+                                          <child><object class="GtkBox"><property name="hexpand">true</property></object></child>
+                                          <!-- Line spacing -->
+                                          <child>
+                                            <object class="GtkBox">
+                                              <property name="spacing">4</property>
+                                              <child><object class="GtkImage"><property name="icon-name">format-line-spacing-symbolic</property><property name="tooltip-text">Line Spacing (px)</property><style><class name="dim-label"/></style></object></child>
+                                               <child><object class="GtkSpinButton" id="val_text_spacing"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">-100</property><property name="upper">200</property><property name="step-increment">0.1</property><property name="page-increment">1</property></object></property><property name="value">12</property></object></child>
+                                            </object>
+                                          </child>
+                                          <!-- Text margin X -->
+                                          <child>
+                                            <object class="GtkBox">
+                                              <property name="spacing">4</property>
+                                              <child><object class="GtkImage"><property name="icon-name">expand-horizontal-symbolic</property><property name="tooltip-text">Margin X (px)</property><style><class name="dim-label"/></style></object></child>
+                                               <child><object class="GtkSpinButton" id="val_text_margin_x"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">500</property><property name="step-increment">0.1</property><property name="page-increment">1</property></object></property><property name="value">20</property></object></child>
+                                            </object>
+                                          </child>
+                                          <!-- Text margin Y -->
+                                          <child>
+                                            <object class="GtkBox">
+                                              <property name="spacing">4</property>
+                                              <child><object class="GtkImage"><property name="icon-name">expand-vertical-symbolic</property><property name="tooltip-text">Margin Y (px)</property><style><class name="dim-label"/></style></object></child>
+                                               <child><object class="GtkSpinButton" id="val_text_margin_y"><property name="digits">1</property><property name="adjustment"><object class="GtkAdjustment"><property name="lower">0</property><property name="upper">500</property><property name="step-increment">0.1</property><property name="page-increment">1</property></object></property><property name="value">20</property></object></child>
+                                            </object>
+                                          </child>
                                         <!-- Text opacity -->
                                         <child>
                                           <object class="GtkBox">
@@ -507,7 +507,7 @@
                                             </property>
                                           </object>
                                         </child>
-                                        <child><object class="GtkColorButton" id="btn_t_color"><property name="tooltip-text">Text Color</property><property name="rgba">rgb(255,255,255)</property></object></child>
+                                        <child><object class="GtkColorButton" id="btn_t_color"><property name="rgba">rgb(255,255,255)</property></object></child>
 
                                         <child>
                                           <object class="GtkBox">
@@ -520,8 +520,8 @@
                                         <child>
                                           <object class="GtkBox">
                                             <style><class name="linked"/></style>
-                                            <child><object class="GtkToggleButton" id="btn_t_shadow"><property name="icon-name">format-text-shadow-symbolic</property><property name="tooltip-text">Text Shadow</property></object></child>
-                                            <child><object class="GtkToggleButton" id="btn_t_stroke"><property name="icon-name">format-text-outline-symbolic</property><property name="tooltip-text">Text Stroke</property></object></child>
+                                            <child><object class="GtkToggleButton" id="btn_t_shadow"><property name="icon-name">format-text-shadow-symbolic</property></object></child>
+                                            <child><object class="GtkToggleButton" id="btn_t_stroke"><property name="icon-name">format-text-outline-symbolic</property></object></child>
                                           </object>
                                         </child>
                                         <child><object class="GtkColorButton" id="btn_t_stroke_color"><property name="tooltip-text">Text Stroke Color</property><property name="rgba">rgb(0,0,0)</property></object></child>
@@ -592,61 +592,13 @@
                                                  <property name="icon-name">export-symbolic</property>
                                                  <property name="tooltip-text">Export Preset</property>
                                                </object>
-                                             </child>
-                                           </object>
-                                         </child>
-                                       </object>
-                                     </child>
+                                              </child>
+                                            </object>
+                                          </child>
+                                        </object>
+                                      </child>
 
-                                     <!-- Metadata injection toggle -->
-                                     <child><object class="GtkSeparator"/></child>
-                                     <child><object class="GtkLabel"><property name="label">EXPERIMENTAL</property><property name="halign">1</property><style><class name="heading"/></style></object></child>
-                                      <child>
-                                       <object class="GtkBox">
-                                         <property name="spacing">8</property>
-                                         <property name="halign">start</property>
-                                         <property name="hexpand">false</property>
-                                         <child>
-                                           <object class="GtkLabel">
-                                             <property name="label">Watermark injection to metadata</property>
-                                             <property name="halign">start</property>
-                                             <property name="hexpand">true</property>
-                                             <property name="tooltip-text">Inject watermark into image metadata</property>
-                                           </object>
-                                         </child>
-                                         <child>
-                                           <object class="GtkSwitch" id="btn_metadata_inject">
-                                             <property name="valign">center</property>
-                                             <property name="hexpand">false</property>
-                                           </object>
-                                         </child>
-                                       </object>
-                                     </child>
-
-                                     <!-- XLSX time injection toggle -->
-                                     <child>
-                                       <object class="GtkBox">
-                                         <property name="spacing">8</property>
-                                         <property name="halign">start</property>
-                                         <property name="hexpand">false</property>
-                                         <child>
-                                           <object class="GtkLabel">
-                                             <property name="label">XLSX clock injection to EXIF</property>
-                                             <property name="halign">start</property>
-                                             <property name="hexpand">true</property>
-                                             <property name="tooltip-text">Inject XLSX time into EXIF timestamps</property>
-                                           </object>
-                                         </child>
-                                        <child>
-                                          <object class="GtkSwitch" id="btn_xlsx_time_exif">
-                                            <property name="valign">center</property>
-                                            <property name="hexpand">false</property>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
-
-                                    <!-- Decoration image -->
+                                     <!-- Decoration image -->
                                     <child>
                                       <object class="GtkBox">
                                         <property name="halign">3</property> <!-- End-aligned -->

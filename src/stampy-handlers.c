@@ -84,19 +84,6 @@ static void on_panel_setting_changed(GtkWidget *widget, gpointer user_data) {
     stampy_schedule_save_last_state(self);
 }
 
-static void on_metadata_inject_toggled(GObject *object, GParamSpec *pspec, gpointer user_data) {
-    StampyWindow *self = STAMPY_WINDOW(user_data);
-    GtkSwitch *btn = GTK_SWITCH(object);
-    gboolean active;
-
-    (void)pspec;
-    if (!self || !STAMPY_IS_WINDOW(self)) return;
-    active = gtk_switch_get_active(btn);
-    stampy_config_set_bool(STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, active);
-    stampy_render_live_preview(self);
-    stampy_schedule_save_last_state(self);
-}
-
 static void on_dropdown_setting_changed(GObject *gobject, GParamSpec *pspec, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
     (void)gobject; (void)pspec;
@@ -128,6 +115,473 @@ static void on_pu_folder_selected(GObject *gobject, GParamSpec *pspec, gpointer 
     stampy_rebuild_file_listbox(self);
 }
 
+typedef struct {
+    StampyWindow *self;
+    GtkWidget *button;
+    GtkWidget *popover;
+    guint show_timer_id;
+    guint hide_timer_id;
+} HoverPopoverData;
+
+static gboolean on_hover_show_timeout(gpointer user_data) {
+    HoverPopoverData *data = (HoverPopoverData *)user_data;
+    data->show_timer_id = 0;
+    if (data->popover) {
+        if (data->self && data->self->active_hover_popover &&
+            data->self->active_hover_popover != data->popover) {
+            gtk_popover_popdown(GTK_POPOVER(data->self->active_hover_popover));
+        }
+        if (!gtk_widget_get_visible(data->popover)) {
+            gtk_popover_popup(GTK_POPOVER(data->popover));
+            if (data->self) data->self->active_hover_popover = data->popover;
+        }
+    }
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean on_hover_hide_timeout(gpointer user_data) {
+    HoverPopoverData *data = (HoverPopoverData *)user_data;
+    data->hide_timer_id = 0;
+    if (data->popover && gtk_widget_get_visible(data->popover)) {
+        GtkRoot *root = gtk_widget_get_root(data->popover);
+        if (root) {
+            GtkWidget *focus = gtk_root_get_focus(root);
+            if (focus && gtk_widget_is_ancestor(focus, data->popover)) {
+                return G_SOURCE_REMOVE;
+            }
+        }
+        gtk_popover_popdown(GTK_POPOVER(data->popover));
+        if (data->self && data->self->active_hover_popover == data->popover) {
+            data->self->active_hover_popover = NULL;
+        }
+    }
+    return G_SOURCE_REMOVE;
+}
+
+static void on_widget_motion_enter(GtkEventControllerMotion *ctrl, double x, double y, gpointer user_data) {
+    HoverPopoverData *data = (HoverPopoverData *)user_data;
+    (void)ctrl; (void)x; (void)y;
+    if (data->hide_timer_id > 0) {
+        g_source_remove(data->hide_timer_id);
+        data->hide_timer_id = 0;
+    }
+    if (data->popover && !gtk_widget_get_visible(data->popover)) {
+        if (data->show_timer_id == 0) {
+            data->show_timer_id = g_timeout_add(500, on_hover_show_timeout, data);
+        }
+    }
+}
+
+static void on_widget_motion_leave(GtkEventControllerMotion *ctrl, gpointer user_data) {
+    HoverPopoverData *data = (HoverPopoverData *)user_data;
+    (void)ctrl;
+    if (data->show_timer_id > 0) {
+        g_source_remove(data->show_timer_id);
+        data->show_timer_id = 0;
+    }
+    if (data->popover && gtk_widget_get_visible(data->popover)) {
+        if (data->hide_timer_id == 0) {
+            data->hide_timer_id = g_timeout_add(500, on_hover_hide_timeout, data);
+        }
+    }
+}
+
+static void hover_popover_data_free(gpointer user_data) {
+    HoverPopoverData *data = (HoverPopoverData *)user_data;
+    if (data) {
+        if (data->show_timer_id > 0) {
+            g_source_remove(data->show_timer_id);
+            data->show_timer_id = 0;
+        }
+        if (data->hide_timer_id > 0) {
+            g_source_remove(data->hide_timer_id);
+            data->hide_timer_id = 0;
+        }
+        if (data->popover) {
+            if (data->self && data->self->active_hover_popover == data->popover) {
+                data->self->active_hover_popover = NULL;
+            }
+            gtk_widget_unparent(data->popover);
+            data->popover = NULL;
+        }
+        g_free(data);
+    }
+}
+
+static void on_button_click_immediate(HoverPopoverData *data) {
+    if (data->show_timer_id > 0) {
+        g_source_remove(data->show_timer_id);
+        data->show_timer_id = 0;
+    }
+    if (data->hide_timer_id > 0) {
+        g_source_remove(data->hide_timer_id);
+        data->hide_timer_id = 0;
+    }
+    if (data->popover) {
+        if (data->self && data->self->active_hover_popover &&
+            data->self->active_hover_popover != data->popover) {
+            gtk_popover_popdown(GTK_POPOVER(data->self->active_hover_popover));
+        }
+        if (!gtk_widget_get_visible(data->popover)) {
+            gtk_popover_popup(GTK_POPOVER(data->popover));
+            if (data->self) data->self->active_hover_popover = data->popover;
+        } else {
+            gtk_popover_popdown(GTK_POPOVER(data->popover));
+            if (data->self && data->self->active_hover_popover == data->popover) {
+                data->self->active_hover_popover = NULL;
+            }
+        }
+    }
+}
+
+static void on_button_right_click(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
+    HoverPopoverData *data = (HoverPopoverData *)user_data;
+    (void)gesture; (void)n_press; (void)x; (void)y;
+    on_button_click_immediate(data);
+}
+
+static void on_button_left_click(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data) {
+    HoverPopoverData *data = (HoverPopoverData *)user_data;
+    (void)n_press; (void)x; (void)y;
+    on_button_click_immediate(data);
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
+static void on_popover_closed(GtkPopover *popover, gpointer user_data) {
+    HoverPopoverData *data = (HoverPopoverData *)user_data;
+    if (data->show_timer_id > 0) {
+        g_source_remove(data->show_timer_id);
+        data->show_timer_id = 0;
+    }
+    if (data->hide_timer_id > 0) {
+        g_source_remove(data->hide_timer_id);
+        data->hide_timer_id = 0;
+    }
+    if (data->self && data->self->active_hover_popover == GTK_WIDGET(popover)) {
+        data->self->active_hover_popover = NULL;
+    }
+}
+
+static void attach_hover_popover(StampyWindow *self, GtkWidget *button, GtkWidget *popover, GtkWidget *content_box, gboolean intercept_primary_click) {
+    HoverPopoverData *data = g_new0(HoverPopoverData, 1);
+    GtkEventController *motion_btn;
+    GtkEventController *motion_pop;
+    GtkGesture *click_sec;
+
+    data->self = self;
+    data->button = button;
+    data->popover = popover;
+
+    gtk_popover_set_autohide(GTK_POPOVER(popover), FALSE);
+    g_signal_connect(popover, "closed", G_CALLBACK(on_popover_closed), data);
+
+    motion_btn = gtk_event_controller_motion_new();
+    g_signal_connect(motion_btn, "enter", G_CALLBACK(on_widget_motion_enter), data);
+    g_signal_connect(motion_btn, "leave", G_CALLBACK(on_widget_motion_leave), data);
+    gtk_widget_add_controller(button, motion_btn);
+
+    motion_pop = gtk_event_controller_motion_new();
+    g_signal_connect(motion_pop, "enter", G_CALLBACK(on_widget_motion_enter), data);
+    g_signal_connect(motion_pop, "leave", G_CALLBACK(on_widget_motion_leave), data);
+    gtk_widget_add_controller(content_box, motion_pop);
+
+    click_sec = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_sec), GDK_BUTTON_SECONDARY);
+    g_signal_connect(click_sec, "pressed", G_CALLBACK(on_button_right_click), data);
+    gtk_widget_add_controller(button, GTK_EVENT_CONTROLLER(click_sec));
+
+    if (intercept_primary_click) {
+        GtkGesture *click_pri = gtk_gesture_click_new();
+        gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_pri), GDK_BUTTON_PRIMARY);
+        gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(click_pri), GTK_PHASE_CAPTURE);
+        g_signal_connect(click_pri, "pressed", G_CALLBACK(on_button_left_click), data);
+        gtk_widget_add_controller(button, GTK_EVENT_CONTROLLER(click_pri));
+    }
+
+    g_object_set_data_full(G_OBJECT(button), "hover-popover-data", data, hover_popover_data_free);
+}
+
+typedef struct {
+    StampyWindow *self;
+    GtkWidget *target_color_btn;
+    GdkRGBA rgba;
+} SwatchClickData;
+
+static void on_swatch_clicked(GtkButton *btn, gpointer user_data) {
+    SwatchClickData *sd = (SwatchClickData *)user_data;
+    (void)btn;
+    if (sd && sd->target_color_btn) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+        gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(sd->target_color_btn), &sd->rgba);
+#pragma GCC diagnostic pop
+        if (sd->self) on_panel_setting_changed(NULL, sd->self);
+    }
+}
+
+static void draw_color_swatch_circle(GtkDrawingArea *drawing_area, cairo_t *cr, int width, int height, gpointer user_data) {
+    GdkRGBA *color = (GdkRGBA *)user_data;
+    double radius;
+    (void)drawing_area;
+
+    radius = (MIN(width, height) / 2.0) - 2.0;
+    if (radius < 2.0) radius = 2.0;
+
+    cairo_arc(cr, width / 2.0, height / 2.0, radius, 0, 2 * G_PI);
+    cairo_set_source_rgba(cr, color->red, color->green, color->blue, color->alpha);
+    cairo_fill_preserve(cr);
+
+    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.35);
+    cairo_set_line_width(cr, 1.2);
+    cairo_stroke(cr);
+}
+
+static GtkWidget *create_swatch_button(StampyWindow *self, GtkWidget *target_color_btn, const GdkRGBA *rgba, const char *tooltip) {
+    GtkWidget *btn = gtk_button_new();
+    GtkWidget *area = gtk_drawing_area_new();
+    GdkRGBA *color_copy = g_new(GdkRGBA, 1);
+    SwatchClickData *sd = g_new0(SwatchClickData, 1);
+
+    *color_copy = *rgba;
+    gtk_drawing_area_set_content_width(GTK_DRAWING_AREA(area), 20);
+    gtk_drawing_area_set_content_height(GTK_DRAWING_AREA(area), 20);
+    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(area), draw_color_swatch_circle, color_copy, g_free);
+    gtk_button_set_child(GTK_BUTTON(btn), area);
+    gtk_widget_set_tooltip_text(btn, tooltip);
+    gtk_widget_add_css_class(btn, "flat");
+
+    sd->self = self;
+    sd->target_color_btn = target_color_btn;
+    sd->rgba = *rgba;
+
+    g_signal_connect(btn, "clicked", G_CALLBACK(on_swatch_clicked), sd);
+    g_object_set_data_full(G_OBJECT(btn), "swatch-click-data", sd, g_free);
+
+    return btn;
+}
+
+static void on_text_color_chooser_rgba_changed(GObject *object, GParamSpec *pspec, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    GdkRGBA rgba;
+    (void)pspec;
+    if (!self || !self->btn_t_color) return;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(object), &rgba);
+    gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(self->btn_t_color), &rgba);
+#pragma GCC diagnostic pop
+    on_panel_setting_changed(NULL, self);
+}
+
+static const struct {
+    double r, g, b, a;
+    const char *name;
+} text_color_swatches[] = {
+    {1.0, 1.0, 1.0, 1.0, "White"},
+    {1.0, 1.0, 0.0, 1.0, "Yellow"},
+    {0.0, 1.0, 0.0, 1.0, "Green"},
+    {0.0, 1.0, 1.0, 1.0, "Cyan"},
+    {1.0, 0.65, 0.0, 1.0, "Orange"},
+    {1.0, 0.0, 0.0, 1.0, "Red"},
+    {0.0, 0.0, 0.0, 1.0, "Black"},
+};
+
+static void create_text_color_popover(StampyWindow *self) {
+    GtkWidget *popover;
+    GtkWidget *content_box;
+    GtkWidget *lbl_title;
+    GtkWidget *row_swatches;
+    GtkWidget *lbl_swatches;
+    GtkWidget *swatches_box;
+    GtkWidget *chooser;
+    GdkRGBA curr_rgba;
+    int k;
+
+    if (!self || !self->btn_t_color) return;
+
+    popover = gtk_popover_new();
+    gtk_widget_set_parent(popover, self->btn_t_color);
+    gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_BOTTOM);
+    gtk_popover_set_autohide(GTK_POPOVER(popover), FALSE);
+
+    content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(content_box, 10);
+    gtk_widget_set_margin_end(content_box, 10);
+    gtk_widget_set_margin_top(content_box, 10);
+    gtk_widget_set_margin_bottom(content_box, 10);
+
+    lbl_title = gtk_label_new("Text Color");
+    gtk_widget_add_css_class(lbl_title, "heading");
+    gtk_label_set_xalign(GTK_LABEL(lbl_title), 0.0);
+    gtk_box_append(GTK_BOX(content_box), lbl_title);
+
+    /* Quick Swatches Row */
+    row_swatches = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    lbl_swatches = gtk_label_new("Quick");
+    gtk_label_set_xalign(GTK_LABEL(lbl_swatches), 0.0);
+    gtk_box_append(GTK_BOX(row_swatches), lbl_swatches);
+
+    swatches_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    for (k = 0; k < (int)(sizeof(text_color_swatches) / sizeof(text_color_swatches[0])); k++) {
+        GdkRGBA c = {text_color_swatches[k].r, text_color_swatches[k].g, text_color_swatches[k].b, text_color_swatches[k].a};
+        GtkWidget *sw_btn = create_swatch_button(self, self->btn_t_color, &c, text_color_swatches[k].name);
+        gtk_box_append(GTK_BOX(swatches_box), sw_btn);
+    }
+    gtk_box_append(GTK_BOX(row_swatches), swatches_box);
+    gtk_box_append(GTK_BOX(content_box), row_swatches);
+
+    /* Full in-popover Color Chooser Widget */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    chooser = gtk_color_chooser_widget_new();
+    gtk_color_chooser_set_use_alpha(GTK_COLOR_CHOOSER(chooser), FALSE);
+    gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(self->btn_t_color), &curr_rgba);
+    gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(chooser), &curr_rgba);
+    g_signal_connect(chooser, "notify::rgba", G_CALLBACK(on_text_color_chooser_rgba_changed), self);
+    gtk_box_append(GTK_BOX(content_box), chooser);
+#pragma GCC diagnostic pop
+
+    gtk_popover_set_child(GTK_POPOVER(popover), content_box);
+
+    attach_hover_popover(self, self->btn_t_color, popover, content_box, TRUE);
+}
+
+static void create_effect_popover(StampyWindow *self,
+                                  GtkWidget *anchor_button,
+                                  const char *title,
+                                  const char *slider_label,
+                                  double min_val, double max_val, double step, double default_val,
+                                  GtkWidget **inout_color_button,
+                                  const GdkRGBA *default_color,
+                                  GtkWidget **out_slider) {
+    GtkWidget *popover;
+    GtkWidget *content_box;
+    GtkWidget *lbl_title;
+    GtkWidget *row_color;
+    GtkWidget *lbl_color;
+    GtkWidget *row_slider;
+    GtkWidget *lbl_slider;
+    GtkWidget *scale;
+    GtkWidget *spin;
+    GtkAdjustment *adj;
+
+    if (!anchor_button) return;
+
+    popover = gtk_popover_new();
+    gtk_widget_set_parent(popover, anchor_button);
+    gtk_popover_set_position(GTK_POPOVER(popover), GTK_POS_BOTTOM);
+    gtk_popover_set_autohide(GTK_POPOVER(popover), FALSE);
+
+    content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(content_box, 10);
+    gtk_widget_set_margin_end(content_box, 10);
+    gtk_widget_set_margin_top(content_box, 10);
+    gtk_widget_set_margin_bottom(content_box, 10);
+
+    lbl_title = gtk_label_new(title);
+    gtk_widget_add_css_class(lbl_title, "heading");
+    gtk_label_set_xalign(GTK_LABEL(lbl_title), 0.0);
+    gtk_box_append(GTK_BOX(content_box), lbl_title);
+
+    /* Color picker row */
+    row_color = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    lbl_color = gtk_label_new("Color");
+    gtk_label_set_xalign(GTK_LABEL(lbl_color), 0.0);
+    gtk_widget_set_hexpand(lbl_color, TRUE);
+    gtk_box_append(GTK_BOX(row_color), lbl_color);
+
+    if (inout_color_button && *inout_color_button) {
+        GtkWidget *parent = gtk_widget_get_parent(*inout_color_button);
+        if (parent) {
+            g_object_ref(*inout_color_button);
+            gtk_box_remove(GTK_BOX(parent), *inout_color_button);
+            gtk_box_append(GTK_BOX(row_color), *inout_color_button);
+            g_object_unref(*inout_color_button);
+        } else {
+            gtk_box_append(GTK_BOX(row_color), *inout_color_button);
+        }
+    } else {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+        GtkWidget *new_color_btn = gtk_color_button_new();
+        if (default_color) {
+            gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(new_color_btn), default_color);
+        }
+        if (inout_color_button) *inout_color_button = new_color_btn;
+        gtk_box_append(GTK_BOX(row_color), new_color_btn);
+#pragma GCC diagnostic pop
+    }
+    gtk_box_append(GTK_BOX(content_box), row_color);
+
+    /* Thickness / Offset slider and typeable spin row */
+    row_slider = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    lbl_slider = gtk_label_new(slider_label);
+    gtk_label_set_xalign(GTK_LABEL(lbl_slider), 0.0);
+
+    adj = gtk_adjustment_new(default_val, min_val, max_val, step, step * 10.0, 0.0);
+    scale = gtk_scale_new(GTK_ORIENTATION_HORIZONTAL, adj);
+    gtk_scale_set_draw_value(GTK_SCALE(scale), FALSE);
+    gtk_widget_set_hexpand(scale, TRUE);
+    gtk_widget_set_size_request(scale, 100, -1);
+
+    spin = gtk_spin_button_new(adj, step, 1);
+    gtk_spin_button_set_numeric(GTK_SPIN_BUTTON(spin), TRUE);
+    gtk_spin_button_set_update_policy(GTK_SPIN_BUTTON(spin), GTK_UPDATE_ALWAYS);
+    gtk_widget_set_size_request(spin, 75, -1);
+
+    gtk_box_append(GTK_BOX(row_slider), lbl_slider);
+    gtk_box_append(GTK_BOX(row_slider), scale);
+    gtk_box_append(GTK_BOX(row_slider), spin);
+    gtk_box_append(GTK_BOX(content_box), row_slider);
+    if (out_slider) *out_slider = scale;
+
+    gtk_popover_set_child(GTK_POPOVER(popover), content_box);
+
+    attach_hover_popover(self, anchor_button, popover, content_box, FALSE);
+}
+
+void stampy_setup_hover_effect_popovers(StampyWindow *self) {
+    GdkRGBA black_shadow = {0.0, 0.0, 0.0, 0.7};
+    GdkRGBA comp_shadow = {0.0, 0.0, 0.0, 0.6};
+
+    if (!self) return;
+
+    /* Main Text Color: in-popover palette swatches + full color chooser */
+    create_text_color_popover(self);
+
+    /* Text Stroke: color picker + thickness slider */
+    create_effect_popover(self,
+                          self->btn_t_stroke,
+                          "Text Stroke", "Thickness",
+                          0.1, 12.0, 0.1, 2.5,
+                          &self->btn_t_stroke_color, NULL,
+                          &self->val_t_stroke_width);
+
+    /* Text Shadow: color picker + offset slider */
+    create_effect_popover(self,
+                          self->btn_t_shadow,
+                          "Text Shadow", "Offset",
+                          0.1, 12.0, 0.1, 2.0,
+                          &self->btn_t_shadow_color, &black_shadow,
+                          &self->val_t_shadow_width);
+
+    /* Compass Stroke: color picker + thickness slider */
+    create_effect_popover(self,
+                          self->btn_c_stroke,
+                          "Compass Stroke", "Thickness",
+                          0.1, 12.0, 0.1, 2.0,
+                          &self->btn_c_stroke_color, NULL,
+                          &self->val_c_stroke_width);
+
+    /* Compass Shadow: color picker + offset slider */
+    create_effect_popover(self,
+                          self->btn_c_shadow,
+                          "Compass Shadow", "Offset",
+                          0.1, 15.0, 0.1, 4.0,
+                          &self->btn_c_shadow_color, &comp_shadow,
+                          &self->val_c_shadow_width);
+}
+
 void stampy_connect_panel_signals(StampyWindow *self) {
     if (!self) return;
 
@@ -145,6 +599,9 @@ void stampy_connect_panel_signals(StampyWindow *self) {
     if (self->btn_c_shadow) g_signal_connect(self->btn_c_shadow, "toggled", G_CALLBACK(on_panel_setting_changed), self);
     if (self->btn_c_stroke) g_signal_connect(self->btn_c_stroke, "toggled", G_CALLBACK(on_panel_setting_changed), self);
     if (self->btn_c_stroke_color) g_signal_connect(self->btn_c_stroke_color, "color-set", G_CALLBACK(on_panel_setting_changed), self);
+    if (self->val_c_stroke_width) g_signal_connect(self->val_c_stroke_width, "value-changed", G_CALLBACK(on_panel_setting_changed), self);
+    if (self->val_c_shadow_width) g_signal_connect(self->val_c_shadow_width, "value-changed", G_CALLBACK(on_panel_setting_changed), self);
+    if (self->btn_c_shadow_color) g_signal_connect(self->btn_c_shadow_color, "color-set", G_CALLBACK(on_panel_setting_changed), self);
 
     if (self->val_text_size) g_signal_connect(self->val_text_size, "value-changed", G_CALLBACK(on_panel_setting_changed), self);
     if (self->val_text_margin_x) g_signal_connect(self->val_text_margin_x, "value-changed", G_CALLBACK(on_panel_setting_changed), self);
@@ -161,11 +618,10 @@ void stampy_connect_panel_signals(StampyWindow *self) {
     if (self->btn_t_stroke) g_signal_connect(self->btn_t_stroke, "toggled", G_CALLBACK(on_panel_setting_changed), self);
     if (self->btn_t_stroke_color) g_signal_connect(self->btn_t_stroke_color, "color-set", G_CALLBACK(on_panel_setting_changed), self);
     if (self->btn_t_color) g_signal_connect(self->btn_t_color, "color-set", G_CALLBACK(on_panel_setting_changed), self);
+    if (self->val_t_stroke_width) g_signal_connect(self->val_t_stroke_width, "value-changed", G_CALLBACK(on_panel_setting_changed), self);
+    if (self->val_t_shadow_width) g_signal_connect(self->val_t_shadow_width, "value-changed", G_CALLBACK(on_panel_setting_changed), self);
+    if (self->btn_t_shadow_color) g_signal_connect(self->btn_t_shadow_color, "color-set", G_CALLBACK(on_panel_setting_changed), self);
     if (self->val_text_spacing) g_signal_connect(self->val_text_spacing, "value-changed", G_CALLBACK(on_panel_setting_changed), self);
-
-    if (self->btn_metadata_inject) g_signal_connect(self->btn_metadata_inject, "notify::active", G_CALLBACK(on_metadata_inject_toggled), self);
-
-    if (self->btn_xlsx_time_exif) g_signal_connect(self->btn_xlsx_time_exif, "notify::active", G_CALLBACK(on_xlsx_time_exif_toggled), self);
 }
 
 /* Rebuilds the file listbox, sorted naturally. */

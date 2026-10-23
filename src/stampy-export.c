@@ -17,6 +17,11 @@ typedef struct {
     double comp_margin_y;
     guint comp_pos_idx;
     gboolean comp_shadow;
+    gboolean comp_stroke;
+    double comp_shadow_width;
+    double comp_stroke_width;
+    GdkRGBA comp_stroke_color;
+    GdkRGBA comp_shadow_color;
 
     double font_size;
     double text_opacity;
@@ -30,8 +35,11 @@ typedef struct {
     cairo_font_weight_t font_weight;
     gboolean text_shadow;
     gboolean text_stroke;
+    double text_stroke_width;
+    double text_shadow_width;
     GdkRGBA text_color;
     GdkRGBA stroke_color;
+    GdkRGBA shadow_color;
 
     int jpeg_quality;
     gboolean title_experimental;  /* inject DOCX text as title/desc metadata */
@@ -351,12 +359,18 @@ static void snapshot_export_settings(StampyWindow *window_self, ExportSettingsSn
         snap->comp_margin_y = gtk_spin_button_get_value(GTK_SPIN_BUTTON(window_self->val_compass_margin_y));
         snap->comp_pos_idx = gtk_drop_down_get_selected(GTK_DROP_DOWN(window_self->drop_compass_pos));
         snap->comp_shadow = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(window_self->btn_c_shadow));
+        snap->comp_stroke = window_self->btn_c_stroke ? gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(window_self->btn_c_stroke)) : FALSE;
+        snap->comp_stroke_width = window_self->val_c_stroke_width ? gtk_range_get_value(GTK_RANGE(window_self->val_c_stroke_width)) : 2.0;
+        snap->comp_shadow_width = window_self->val_c_shadow_width ? gtk_range_get_value(GTK_RANGE(window_self->val_c_shadow_width)) : 4.0;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+        if (window_self->btn_c_stroke_color) gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(window_self->btn_c_stroke_color), &snap->comp_stroke_color);
+        if (window_self->btn_c_shadow_color) gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(window_self->btn_c_shadow_color), &snap->comp_shadow_color);
+#pragma GCC diagnostic pop
     }
 
     snap->title_experimental = stampy_config_get_bool(STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, FALSE);
-    snap->xlsx_time_exif = stampy_config_get_bool(STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE) ||
-                           (window_self->btn_xlsx_time_exif &&
-                            gtk_switch_get_active(GTK_SWITCH(window_self->btn_xlsx_time_exif)));
+    snap->xlsx_time_exif = stampy_config_get_bool(STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE);
     snap->use_native_metadata = stampy_config_get_bool(STAMPY_CONFIG_KEY_USE_NATIVE_METADATA, FALSE);
     snap->batch_exiftool = stampy_config_get_bool(STAMPY_CONFIG_KEY_BATCH_EXIFTOOL, FALSE);
 
@@ -396,11 +410,18 @@ static void snapshot_export_settings(StampyWindow *window_self, ExportSettingsSn
         snap->font_weight = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(window_self->btn_t_bold)) ? CAIRO_FONT_WEIGHT_BOLD : CAIRO_FONT_WEIGHT_NORMAL;
         snap->text_shadow = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(window_self->btn_t_shadow));
         snap->text_stroke = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(window_self->btn_t_stroke));
+        snap->text_stroke_width = window_self->val_t_stroke_width ? gtk_range_get_value(GTK_RANGE(window_self->val_t_stroke_width)) : 2.5;
+        snap->text_shadow_width = window_self->val_t_shadow_width ? gtk_range_get_value(GTK_RANGE(window_self->val_t_shadow_width)) : 2.0;
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
         gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(window_self->btn_t_color), &snap->text_color);
         gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(window_self->btn_t_stroke_color), &snap->stroke_color);
+        if (window_self->btn_t_shadow_color) {
+            gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(window_self->btn_t_shadow_color), &snap->shadow_color);
+        } else {
+            snap->shadow_color = (GdkRGBA){0.0, 0.0, 0.0, 0.7};
+        }
 #pragma GCC diagnostic pop
     }
 }
@@ -473,9 +494,23 @@ static GdkPixbuf *render_stamped_on_pixbuf(GdkPixbuf *pixbuf, const ExportSettin
             cairo_save(cr);
 
             if (snap->comp_shadow) {
-                cairo_set_source_rgba(cr, 0, 0, 0, opacity * 0.6);
-                cairo_rectangle(cr, cx + (4 * scale), cy + (4 * scale), comp_w, comp_h);
+                GdkRGBA c_shc = snap->comp_shadow_color;
+                double c_sh_w = (snap->comp_shadow_width > 0.0) ? snap->comp_shadow_width : 4.0;
+                if (c_shc.alpha <= 0.001) {
+                    c_shc.red = 0.0; c_shc.green = 0.0; c_shc.blue = 0.0; c_shc.alpha = 0.6;
+                }
+                cairo_set_source_rgba(cr, c_shc.red, c_shc.green, c_shc.blue, c_shc.alpha * opacity);
+                cairo_rectangle(cr, cx + (c_sh_w * scale), cy + (c_sh_w * scale), comp_w, comp_h);
                 cairo_fill(cr);
+            }
+
+            if (snap->comp_stroke) {
+                GdkRGBA c_sc = snap->comp_stroke_color;
+                double c_st_w = (snap->comp_stroke_width > 0.0) ? snap->comp_stroke_width : 2.0;
+                cairo_set_source_rgba(cr, c_sc.red, c_sc.green, c_sc.blue, opacity);
+                cairo_set_line_width(cr, c_st_w * scale);
+                cairo_rectangle(cr, cx, cy, comp_w, comp_h);
+                cairo_stroke(cr);
             }
 
 #pragma GCC diagnostic push
@@ -509,6 +544,7 @@ static GdkPixbuf *render_stamped_on_pixbuf(GdkPixbuf *pixbuf, const ExportSettin
         double line_spacing = snap->line_spacing * scale;
         double pad_right = 0.0, pad_bottom = 0.0, pad_left = 0.0, pad_top = 0.0;
         double left_bound, right_bound;
+        double stroke_width, shadow_width;
 
         char *clean_text = g_strdup(custom_text);
         char *p = clean_text, *q = clean_text;
@@ -542,12 +578,15 @@ static GdkPixbuf *render_stamped_on_pixbuf(GdkPixbuf *pixbuf, const ExportSettin
                 if (ext.width > max_line_w) max_line_w = ext.width;
             }
 
+            stroke_width = (snap->text_stroke_width > 0.0) ? snap->text_stroke_width : 2.5;
+            shadow_width = (snap->text_shadow_width > 0.0) ? snap->text_shadow_width : 2.0;
+
             if (snap->text_shadow) {
-                pad_right = 2.0 * scale;
-                pad_bottom = 2.0 * scale;
+                pad_right = shadow_width * scale;
+                pad_bottom = shadow_width * scale;
             }
             if (snap->text_stroke) {
-                double stroke_r = (2.5 * scale) / 2.0;
+                double stroke_r = (stroke_width * scale) / 2.0;
                 if (stroke_r > pad_right) pad_right = stroke_r;
                 if (stroke_r > pad_bottom) pad_bottom = stroke_r;
                 pad_left = stroke_r;
@@ -582,8 +621,12 @@ static GdkPixbuf *render_stamped_on_pixbuf(GdkPixbuf *pixbuf, const ExportSettin
                 }
 
                 if (snap->text_shadow) {
-                    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, opacity * 0.7);
-                    cairo_move_to(cr, tx + (2.0 * scale), ty + (2.0 * scale));
+                    GdkRGBA shc = snap->shadow_color;
+                    if (shc.alpha <= 0.001) {
+                        shc.red = 0.0; shc.green = 0.0; shc.blue = 0.0; shc.alpha = 0.7;
+                    }
+                    cairo_set_source_rgba(cr, shc.red, shc.green, shc.blue, shc.alpha * opacity);
+                    cairo_move_to(cr, tx + (shadow_width * scale), ty + (shadow_width * scale));
                     cairo_show_text(cr, lines[i]);
                 }
 
@@ -591,7 +634,7 @@ static GdkPixbuf *render_stamped_on_pixbuf(GdkPixbuf *pixbuf, const ExportSettin
                     cairo_move_to(cr, tx, ty);
                     cairo_text_path(cr, lines[i]);
                     cairo_set_source_rgba(cr, sc.red, sc.green, sc.blue, opacity);
-                    cairo_set_line_width(cr, 2.5 * scale);
+                    cairo_set_line_width(cr, stroke_width * scale);
                     cairo_stroke(cr);
                 }
 
