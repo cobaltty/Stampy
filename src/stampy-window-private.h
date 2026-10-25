@@ -14,6 +14,7 @@ typedef struct {
     double latitude;
     double azimuth_raw;
     double time_val;  /* Excel time fraction from XLSX column F */
+    char date_str[16]; /* Excel date YYYY:MM:DD from XLSX if present */
 } GeolocationEntry;
 
 struct _StampyWindow {
@@ -203,6 +204,13 @@ void on_xlsx_time_exif_toggled(GObject *object, GParamSpec *pspec, gpointer user
 #define STAMPY_CONFIG_KEY_EXPORT_THREAD_COUNT  "export-thread-count"  /* int, 0 = auto (all cores) */
 #define STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL "title-experimental" /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_XLSX_TIME_EXIF "xlsx-time-exif" /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_META_TITLE    "meta-title"    /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_META_SUBJECT  "meta-subject"  /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_META_TAGS     "meta-tags"     /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_META_COMMENTS "meta-comments" /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_META_DATE     "meta-date"     /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_META_DATE_SOURCE "meta-date-source" /* string, default "auto" */
+#define STAMPY_CONFIG_KEY_META_TIME     "meta-time"     /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_USE_NATIVE_METADATA "use-native-metadata" /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_BATCH_EXIFTOOL "batch-exiftool" /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_EXPORT_OVERSUBSCRIBE "export-oversubscribe" /* bool, default TRUE */

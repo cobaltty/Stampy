@@ -45,6 +45,18 @@
   </screenshots>
 
   <releases>
+    <release version="1.1120.beta" date="2026-10-25">
+      <description>
+        <p>Granular metadata injection toggles, CSV geolocation support, and dynamic validation.</p>
+        <ul>
+          <li>Added fine-grained toggles for Title, Subject, Tags, Date, and Time metadata injection.</li>
+          <li>Added Date source switcher supporting Auto, Geolocation, and Watermark.</li>
+          <li>Added support for loading CSV geolocation files and parsing various date formats.</li>
+          <li>Added dynamic missing-data validation tailored to Regular and PU folder structure modes.</li>
+          <li>Redesigned Expected Data Summary with concise status badges and clean rows.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1020.beta" date="2026-10-23">
       <description>
         <p>PU composite key support, per-folder view, and performance improvements.</p>

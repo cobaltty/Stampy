@@ -44,6 +44,13 @@ typedef struct {
     int jpeg_quality;
     gboolean title_experimental;  /* inject DOCX text as title/desc metadata */
     gboolean xlsx_time_exif;      /* inject XLSX clock/jam time as EXIF DateTimeOriginal/Digitized */
+    gboolean meta_title;          /* inject DOCX text as title metadata */
+    gboolean meta_subject;        /* inject DOCX text as subject metadata */
+    gboolean meta_tags;           /* inject DOCX text as tags/keywords metadata */
+    gboolean meta_comments;       /* inject DOCX text as comments metadata */
+    gboolean meta_date;           /* inject DOCX date as EXIF/IPTC date */
+    int meta_date_source;         /* 0: auto, 1: watermark, 2: geolocation */
+    gboolean meta_time;           /* inject XLSX clock time as EXIF/IPTC time */
     gboolean use_native_metadata; /* use in-memory gexiv2 instead of exiftool */
     gboolean batch_exiftool;      /* run exiftool once with an argfile (-@) */
     GFile *file_compass;
@@ -371,6 +378,22 @@ static void snapshot_export_settings(StampyWindow *window_self, ExportSettingsSn
 
     snap->title_experimental = stampy_config_get_bool(STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, FALSE);
     snap->xlsx_time_exif = stampy_config_get_bool(STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE);
+    snap->meta_title = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TITLE, snap->title_experimental);
+    snap->meta_subject = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_SUBJECT, snap->title_experimental);
+    snap->meta_tags = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TAGS, snap->title_experimental);
+    snap->meta_comments = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_COMMENTS, snap->title_experimental);
+    snap->meta_date = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_DATE, snap->xlsx_time_exif);
+    {
+        char *src_str = stampy_config_get_string(STAMPY_CONFIG_KEY_META_DATE_SOURCE, "auto");
+        if (g_ascii_strcasecmp(src_str, "geolocation") == 0)
+            snap->meta_date_source = 1;
+        else if (g_ascii_strcasecmp(src_str, "watermark") == 0)
+            snap->meta_date_source = 2;
+        else
+            snap->meta_date_source = 0;
+        g_free(src_str);
+    }
+    snap->meta_time = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TIME, snap->xlsx_time_exif);
     snap->use_native_metadata = stampy_config_get_bool(STAMPY_CONFIG_KEY_USE_NATIVE_METADATA, FALSE);
     snap->batch_exiftool = stampy_config_get_bool(STAMPY_CONFIG_KEY_BATCH_EXIFTOOL, FALSE);
 
@@ -1163,10 +1186,13 @@ static void export_image_worker(gpointer data, gpointer user_data) {
             char *docx_date = NULL;
             char time_part[16] = {0};
             char new_dt[32] = {0};
+            char date_only[16] = {0};
             char iptc_date[16] = {0};
             char tz_sys[16] = {0};
             char iso_dt_common[64] = {0};
             char iptc_time_common[32] = {0};
+            gboolean date_applied = FALSE;
+            gboolean time_applied = FALSE;
             GExiv2Metadata *native_meta = NULL;
             GError *native_gex_err = NULL;
 
@@ -1177,32 +1203,37 @@ static void export_image_worker(gpointer data, gpointer user_data) {
             }
 
             /* Extract project description if enabled */
-            if (ctx->snapshot.title_experimental && custom_text && *custom_text != '\0') {
+            if ((ctx->snapshot.meta_title || ctx->snapshot.meta_subject || ctx->snapshot.meta_tags || ctx->snapshot.meta_comments) &&
+                custom_text && *custom_text != '\0') {
                 stampy_extract_project_description(custom_text, &desc_text);
             }
 
             /* Extract date and time if enabled */
-            if (ctx->snapshot.xlsx_time_exif && has_geo) {
+            if (ctx->snapshot.meta_date || ctx->snapshot.meta_time) {
                 int total_seconds, hours, minutes, seconds;
                 GDateTime *now_dt;
                 gchar *fmt_tz;
+                char existing_date[16] = {0};
+                char existing_time[16] = {0};
+                const char *chosen_date = NULL;
+                const char *chosen_time = NULL;
 
-                stampy_extract_docx_date(custom_text, &docx_date);
-
-                if (!docx_date && src_path && *src_path) {
+                if (src_path && *src_path) {
                     if (native_meta) {
                         gchar *existing_dt = gexiv2_metadata_try_get_tag_string(native_meta, "Exif.Photo.DateTimeOriginal", NULL);
                         if (!existing_dt)
                             existing_dt = gexiv2_metadata_try_get_tag_string(native_meta, "Exif.Image.DateTime", NULL);
                         if (existing_dt) {
-                            char existing_date[16] = {0};
-                            if (sscanf(existing_dt, "%15[^ ]", existing_date) == 1 && strlen(existing_date) == 10) {
-                                docx_date = g_strdup(existing_date);
+                            if (strlen(existing_dt) >= 19 && existing_dt[10] == ' ') {
+                                g_strlcpy(existing_date, existing_dt, 11);
+                                g_strlcpy(existing_time, existing_dt + 11, 9);
+                            } else {
+                                sscanf(existing_dt, "%10s", existing_date);
                             }
                             g_free(existing_dt);
                         }
                     }
-                    if (!docx_date && !ctx->snapshot.use_native_metadata) {
+                    if (!existing_date[0] && !ctx->snapshot.use_native_metadata) {
                         char *exif_cmd_fallback = get_exiftool_cmd();
                         char *quoted_src_dt = g_shell_quote(src_path);
                         char *read_dt_cmd = g_strdup_printf("%s -DateTimeOriginal -s3 %s", exif_cmd_fallback, quoted_src_dt);
@@ -1210,9 +1241,12 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                         char dt_buf[64] = {0};
                         if (fp_dt) {
                             if (fgets(dt_buf, sizeof(dt_buf), fp_dt)) {
-                                char existing_date[16] = {0};
-                                if (sscanf(dt_buf, "%15[^ ]", existing_date) == 1 && strlen(existing_date) == 10) {
-                                    docx_date = g_strdup(existing_date);
+                                g_strchomp(dt_buf);
+                                if (strlen(dt_buf) >= 19 && dt_buf[10] == ' ') {
+                                    g_strlcpy(existing_date, dt_buf, 11);
+                                    g_strlcpy(existing_time, dt_buf + 11, 9);
+                                } else {
+                                    sscanf(dt_buf, "%10s", existing_date);
                                 }
                             }
                             pclose(fp_dt);
@@ -1223,19 +1257,68 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                     }
                 }
 
-                if (geo_entry.time_val > 0.0) {
+                if (ctx->snapshot.meta_date) {
+                    char *geo_date = NULL;
+
+                    if (has_geo && geo_entry.date_str[0] != '\0') {
+                        geo_date = g_strdup(geo_entry.date_str);
+                    }
+
+                    if (ctx->snapshot.meta_date_source == 1) {
+                        /* Geolocation */
+                        if (geo_date && strlen(geo_date) == 10) {
+                            chosen_date = geo_date;
+                            date_applied = TRUE;
+                        } else if (existing_date[0] != '\0') {
+                            chosen_date = existing_date;
+                        }
+                    } else if (ctx->snapshot.meta_date_source == 2) {
+                        /* Watermark */
+                        stampy_extract_docx_date(custom_text, &docx_date);
+                        if (docx_date && strlen(docx_date) == 10) {
+                            chosen_date = docx_date;
+                            date_applied = TRUE;
+                        } else if (existing_date[0] != '\0') {
+                            chosen_date = existing_date;
+                        }
+                    } else {
+                        /* Auto: priority geolocation first, then if not present from watermark, then existing EXIF */
+                        if (geo_date && strlen(geo_date) == 10) {
+                            chosen_date = geo_date;
+                            date_applied = TRUE;
+                        } else {
+                            stampy_extract_docx_date(custom_text, &docx_date);
+                            if (docx_date && strlen(docx_date) == 10) {
+                                chosen_date = docx_date;
+                                date_applied = TRUE;
+                            } else if (existing_date[0] != '\0') {
+                                chosen_date = existing_date;
+                            }
+                        }
+                    }
+                    g_free(geo_date);
+                } else if (existing_date[0] != '\0') {
+                    chosen_date = existing_date;
+                }
+
+                if (ctx->snapshot.meta_time && has_geo && geo_entry.time_val > 0.0) {
                     total_seconds = (int)(geo_entry.time_val * 86400.0 + 0.5);
                     total_seconds = (total_seconds % 86400 + 86400) % 86400;
                     hours = total_seconds / 3600;
                     minutes = (total_seconds % 3600) / 60;
                     seconds = total_seconds % 60;
                     snprintf(time_part, sizeof(time_part), "%02d:%02d:%02d", hours, minutes, seconds);
+                    chosen_time = time_part;
+                    time_applied = TRUE;
+                } else if (existing_time[0] != '\0') {
+                    g_strlcpy(time_part, existing_time, sizeof(time_part));
+                    chosen_time = time_part;
                 } else {
-                    /* No time column: default to midnight so EXIF datetime stays valid */
                     snprintf(time_part, sizeof(time_part), "00:00:00");
+                    chosen_time = time_part;
                 }
 
-                if (docx_date && strlen(docx_date) == 10) {
+                if ((date_applied || time_applied) && chosen_date && strlen(chosen_date) == 10) {
                     now_dt = g_date_time_new_now_local();
                     if (now_dt) {
                         fmt_tz = g_date_time_format(now_dt, "%:z");
@@ -1250,14 +1333,15 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                     }
 
                     /* EXIF date/time: "YYYY:MM:DD HH:MM:SS" (colons). */
-                    snprintf(new_dt, sizeof(new_dt), "%s %s", docx_date, time_part);
+                    snprintf(new_dt, sizeof(new_dt), "%s %s", chosen_date, chosen_time);
+                    g_strlcpy(date_only, chosen_date, sizeof(date_only));
                     /* IPTC date: "YYYY-MM-DD" (dashes). */
                     snprintf(iptc_date, sizeof(iptc_date), "%.4s-%.2s-%.2s",
-                             docx_date, docx_date + 5, docx_date + 8);
+                             chosen_date, chosen_date + 5, chosen_date + 8);
                     /* ISO-8601 date-time: "YYYY-MM-DDTHH:MM:SS+07:00" */
                     snprintf(iso_dt_common, sizeof(iso_dt_common), "%.4s-%.2s-%.2sT%s%s",
-                             docx_date, docx_date + 5, docx_date + 8, time_part, tz_sys);
-                    snprintf(iptc_time_common, sizeof(iptc_time_common), "%s%s", time_part, tz_sys);
+                             chosen_date, chosen_date + 5, chosen_date + 8, chosen_time, tz_sys);
+                    snprintf(iptc_time_common, sizeof(iptc_time_common), "%s%s", chosen_time, tz_sys);
                 }
             }
 
@@ -1303,11 +1387,29 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                     }
 
                     if (desc_text && *desc_text != '\0') {
-                        set_gexiv2_xp_tag(meta, "Exif.Image.XPTitle", desc_text);
-                        set_gexiv2_xp_tag(meta, "Exif.Image.XPComment", desc_text);
-                        gexiv2_metadata_try_set_tag_string(meta, "Exif.Image.ImageDescription", desc_text, NULL);
-                        gexiv2_metadata_try_set_tag_string(meta, "Xmp.dc.description", desc_text, NULL);
-                        gexiv2_metadata_try_set_tag_string(meta, "Xmp.dc.title", desc_text, NULL);
+                        if (ctx->snapshot.meta_title) {
+                            set_gexiv2_xp_tag(meta, "Exif.Image.XPTitle", desc_text);
+                            gexiv2_metadata_try_set_tag_string(meta, "Xmp.dc.title", desc_text, NULL);
+                        }
+                        if (ctx->snapshot.meta_subject) {
+                            set_gexiv2_xp_tag(meta, "Exif.Image.XPSubject", desc_text);
+                        }
+                        if (ctx->snapshot.meta_tags) {
+                            set_gexiv2_xp_tag(meta, "Exif.Image.XPKeywords", desc_text);
+                            gexiv2_metadata_try_set_tag_string(meta, "Xmp.dc.subject", desc_text, NULL);
+                            gexiv2_metadata_try_set_tag_string(meta, "Iptc.Application2.Keywords", desc_text, NULL);
+                        }
+                        if (ctx->snapshot.meta_comments) {
+                            set_gexiv2_xp_tag(meta, "Exif.Image.XPComment", desc_text);
+                            gexiv2_metadata_try_set_tag_string(meta, "Exif.Image.ImageDescription", desc_text, NULL);
+                            gexiv2_metadata_try_set_tag_string(meta, "Xmp.dc.description", desc_text, NULL);
+                        }
+                    }
+
+                    if (!ctx->snapshot.meta_tags) {
+                        gexiv2_metadata_try_clear_tag(meta, "Exif.Image.XPKeywords", NULL);
+                        gexiv2_metadata_try_clear_tag(meta, "Xmp.dc.subject", NULL);
+                        gexiv2_metadata_try_clear_tag(meta, "Iptc.Application2.Keywords", NULL);
                     }
 
                     if (new_dt[0] != '\0') {
@@ -1316,7 +1418,7 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                         char iptc_time[32];
 
                         snprintf(iso_dt, sizeof(iso_dt), "%.4s-%.2s-%.2sT%s%s",
-                                 docx_date, docx_date + 5, docx_date + 8, time_part, tz);
+                                 new_dt, new_dt + 5, new_dt + 8, time_part, tz);
                         snprintf(iptc_time, sizeof(iptc_time), "%s%s", time_part, tz);
 
                         gexiv2_metadata_try_set_tag_string(meta, "Exif.Photo.DateTimeOriginal", new_dt, NULL);
@@ -1333,13 +1435,15 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                         gexiv2_metadata_try_set_tag_string(meta, "Xmp.xmp.ModifyDate", iso_dt, NULL);
                         gexiv2_metadata_try_set_tag_string(meta, "Xmp.photoshop.DateCreated", iso_dt, NULL);
 
-                        if (docx_date && time_part[0] != '\0') {
-                            gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSDateStamp", docx_date, NULL);
-                            gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSTimeStamp", time_part, NULL);
+                        if (date_applied) {
+                            gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSDateStamp", date_only, NULL);
+                            /* Clear IPTC DateCreated to prevent it from clobbering DateCreated in exiftool -csv */
+                            gexiv2_metadata_try_clear_tag(meta, "Iptc.Application2.DateCreated", NULL);
                         }
-                        /* Clear IPTC DateCreated to prevent it from clobbering DateCreated in exiftool -csv */
-                        gexiv2_metadata_try_clear_tag(meta, "Iptc.Application2.DateCreated", NULL);
-                        gexiv2_metadata_try_set_tag_string(meta, "Iptc.Application2.TimeCreated", iptc_time, NULL);
+                        if (time_applied) {
+                            gexiv2_metadata_try_set_tag_string(meta, "Exif.GPSInfo.GPSTimeStamp", time_part, NULL);
+                            gexiv2_metadata_try_set_tag_string(meta, "Iptc.Application2.TimeCreated", iptc_time, NULL);
+                        }
                         g_free(tz);
                     }
 
@@ -1384,11 +1488,27 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                 }
 
                 if (desc_text && *desc_text != '\0') {
-                    fprintf(ctx->argfile_fp, "-XMP:Title=%s\n", desc_text);
-                    fprintf(ctx->argfile_fp, "-XMP:Description=%s\n", desc_text);
-                    fprintf(ctx->argfile_fp, "-XPTitle=%s\n", desc_text);
-                    fprintf(ctx->argfile_fp, "-XPComment=%s\n", desc_text);
-                    fprintf(ctx->argfile_fp, "-ImageDescription=%s\n", desc_text);
+                    if (ctx->snapshot.meta_title) {
+                        fprintf(ctx->argfile_fp, "-XMP:Title=%s\n", desc_text);
+                        fprintf(ctx->argfile_fp, "-XPTitle=%s\n", desc_text);
+                    }
+                    if (ctx->snapshot.meta_subject) {
+                        fprintf(ctx->argfile_fp, "-XPSubject=%s\n", desc_text);
+                    }
+                    if (ctx->snapshot.meta_tags) {
+                        fprintf(ctx->argfile_fp, "-XPKeywords=%s\n", desc_text);
+                        fprintf(ctx->argfile_fp, "-XMP:Subject=%s\n", desc_text);
+                        fprintf(ctx->argfile_fp, "-Keywords=%s\n", desc_text);
+                    }
+                    if (ctx->snapshot.meta_comments) {
+                        fprintf(ctx->argfile_fp, "-XMP:Description=%s\n", desc_text);
+                        fprintf(ctx->argfile_fp, "-XPComment=%s\n", desc_text);
+                        fprintf(ctx->argfile_fp, "-ImageDescription=%s\n", desc_text);
+                    }
+                }
+
+                if (!ctx->snapshot.meta_tags) {
+                    fprintf(ctx->argfile_fp, "-XPKeywords=\n-XMP:Subject=\n-Keywords=\n");
                 }
 
                 if (new_dt[0] != '\0') {
@@ -1405,10 +1525,12 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                     fprintf(ctx->argfile_fp, "-XMP-xmp:CreateDate=%s\n", iso_dt_common[0] ? iso_dt_common : new_dt);
                     fprintf(ctx->argfile_fp, "-XMP-xmp:ModifyDate=%s\n", iso_dt_common[0] ? iso_dt_common : new_dt);
                     fprintf(ctx->argfile_fp, "-XMP-photoshop:DateCreated=%s\n", iso_dt_common[0] ? iso_dt_common : new_dt);
-                    if (docx_date && time_part[0] != '\0') {
+                    if (date_applied) {
                         fprintf(ctx->argfile_fp, "-IPTC:DateCreated=\n");
+                        fprintf(ctx->argfile_fp, "-GPSDateStamp=%s\n", date_only);
+                    }
+                    if (time_applied) {
                         fprintf(ctx->argfile_fp, "-IPTC:TimeCreated=%s\n", iptc_time_common[0] ? iptc_time_common : time_part);
-                        fprintf(ctx->argfile_fp, "-GPSDateStamp=%s\n", docx_date);
                         fprintf(ctx->argfile_fp, "-GPSTimeStamp=%s\n", time_part);
                     }
                 }
@@ -1455,9 +1577,22 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                 }
 
                 if (desc_text && *desc_text != '\0') {
-                    g_string_append_printf(cmd,
-                        "-XMP:Title=\"%s\" -XMP:Description=\"%s\" -XPTitle=\"%s\" -XPComment=\"%s\" -ImageDescription=\"%s\" ",
-                        desc_text, desc_text, desc_text, desc_text, desc_text);
+                    if (ctx->snapshot.meta_title) {
+                        g_string_append_printf(cmd, "-XMP:Title=\"%s\" -XPTitle=\"%s\" ", desc_text, desc_text);
+                    }
+                    if (ctx->snapshot.meta_subject) {
+                        g_string_append_printf(cmd, "-XPSubject=\"%s\" ", desc_text);
+                    }
+                    if (ctx->snapshot.meta_tags) {
+                        g_string_append_printf(cmd, "-XPKeywords=\"%s\" -XMP:Subject=\"%s\" -Keywords=\"%s\" ", desc_text, desc_text, desc_text);
+                    }
+                    if (ctx->snapshot.meta_comments) {
+                        g_string_append_printf(cmd, "-XMP:Description=\"%s\" -XPComment=\"%s\" -ImageDescription=\"%s\" ", desc_text, desc_text, desc_text);
+                    }
+                }
+
+                if (!ctx->snapshot.meta_tags) {
+                    g_string_append(cmd, "-XPKeywords= -XMP:Subject= -Keywords= ");
                 }
 
                 if (new_dt[0] != '\0') {
@@ -1478,12 +1613,15 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                         iso_dt_common[0] ? iso_dt_common : new_dt,
                         iso_dt_common[0] ? iso_dt_common : new_dt,
                         iso_dt_common[0] ? iso_dt_common : new_dt);
-                    if (docx_date && time_part[0] != '\0') {
+                    if (date_applied) {
                         g_string_append_printf(cmd,
-                            "-IPTC:DateCreated= -IPTC:TimeCreated=\"%s\" "
-                            "-GPSDateStamp=\"%s\" -GPSTimeStamp=\"%s\" ",
+                            "-IPTC:DateCreated= -GPSDateStamp=\"%s\" ", date_only);
+                    }
+                    if (time_applied) {
+                        g_string_append_printf(cmd,
+                            "-IPTC:TimeCreated=\"%s\" -GPSTimeStamp=\"%s\" ",
                             iptc_time_common[0] ? iptc_time_common : time_part,
-                            docx_date, time_part);
+                            time_part);
                     }
                 }
 

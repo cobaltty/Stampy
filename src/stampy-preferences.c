@@ -295,6 +295,139 @@ on_auto_folder_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
     stampy_prepare_default_export_folder (self);
 }
 
+static void
+on_meta_switch_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  const char *key = (const char *) g_object_get_data (G_OBJECT (object), "config-key");
+  StampyWindow *self = STAMPY_WINDOW (user_data);
+  gboolean active;
+
+  (void) pspec;
+  if (!key)
+    return;
+
+  active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
+  stampy_config_set_bool (key, active);
+  if (self != NULL)
+    stampy_render_live_preview (self);
+}
+
+static void
+ensure_preferences_css (void)
+{
+  static gboolean css_loaded = FALSE;
+  if (!css_loaded)
+    {
+      GtkCssProvider *provider = gtk_css_provider_new ();
+      const char *css =
+        "toggle-group.date-source-toggle-group, .date-source-toggle-group {\n"
+        "  padding: 4px;\n"
+        "  border-radius: 9px;\n"
+        "  background-color: alpha(currentColor, 0.08);\n"
+        "}\n"
+        "toggle-group.date-source-toggle-group > toggle,\n"
+        "toggle-group.date-source-toggle-group > toggle.text-button,\n"
+        ".date-source-toggle-group toggle,\n"
+        ".date-source-toggle-group button {\n"
+        "  padding: 6px 12px;\n"
+        "  border-radius: 6px;\n"
+        "  font-weight: 500;\n"
+        "  font-size: 13px;\n"
+        "  outline: none;\n"
+        "}\n"
+        "toggle-group.date-source-toggle-group > toggle label,\n"
+        ".date-source-toggle-group label {\n"
+        "  font-weight: 500;\n"
+        "}\n"
+        "toggle-group.date-source-toggle-group > toggle:checked,\n"
+        ".date-source-toggle-group toggle:checked,\n"
+        ".date-source-toggle-group button:checked {\n"
+        "  background-color: #ffffff;\n"
+        "  color: #1a1a1a;\n"
+        "  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);\n"
+        "}\n"
+        "@media (prefers-color-scheme: dark) {\n"
+        "  toggle-group.date-source-toggle-group > toggle:checked,\n"
+        "  .date-source-toggle-group toggle:checked,\n"
+        "  .date-source-toggle-group button:checked {\n"
+        "    background-color: alpha(#ffffff, 0.22);\n"
+        "    color: #ffffff;\n"
+        "    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);\n"
+        "  }\n"
+        "}\n";
+      gtk_css_provider_load_from_string (provider, css);
+      gtk_style_context_add_provider_for_display (
+        gdk_display_get_default (),
+        GTK_STYLE_PROVIDER (provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+      );
+      g_object_unref (provider);
+      css_loaded = TRUE;
+    }
+}
+
+static void
+on_date_switch_toggled (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  StampyWindow *self = STAMPY_WINDOW (user_data);
+  GtkWidget *source_row = GTK_WIDGET (g_object_get_data (object, "source-row"));
+  AdwExpanderRow *exp = ADW_EXPANDER_ROW (g_object_get_data (object, "expander-row"));
+  gboolean active = gtk_switch_get_active (GTK_SWITCH (object));
+
+  (void) pspec;
+  stampy_config_set_bool (STAMPY_CONFIG_KEY_META_DATE, active);
+  if (source_row)
+    gtk_widget_set_sensitive (source_row, active);
+  if (exp)
+    adw_expander_row_set_expanded (exp, active);
+  if (self != NULL)
+    stampy_render_live_preview (self);
+}
+
+static void
+on_date_source_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  StampyWindow *self = STAMPY_WINDOW (user_data);
+  const char *name = NULL;
+
+  (void) pspec;
+#if ADW_CHECK_VERSION(1, 7, 0)
+  if (ADW_IS_TOGGLE_GROUP (object))
+    name = adw_toggle_group_get_active_name (ADW_TOGGLE_GROUP (object));
+#endif
+  if (GTK_IS_DROP_DOWN (object))
+    {
+      guint sel = gtk_drop_down_get_selected (GTK_DROP_DOWN (object));
+      const char *modes[] = { "auto", "geolocation", "watermark" };
+      if (sel < G_N_ELEMENTS (modes))
+        name = modes[sel];
+    }
+
+  if (name)
+    stampy_config_set_string (STAMPY_CONFIG_KEY_META_DATE_SOURCE, name);
+
+  if (self != NULL)
+    stampy_render_live_preview (self);
+}
+
+static void
+add_meta_switch_row (AdwPreferencesGroup *group,
+                     StampyWindow *self,
+                     const char *title,
+                     const char *subtitle,
+                     const char *config_key,
+                     gboolean fallback_val)
+{
+  AdwSwitchRow *row = ADW_SWITCH_ROW (adw_switch_row_new ());
+  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), title);
+  if (subtitle != NULL)
+    adw_action_row_set_subtitle (ADW_ACTION_ROW (row), subtitle);
+  adw_switch_row_set_active (row, stampy_config_get_bool (config_key, fallback_val));
+  g_object_set_data (G_OBJECT (row), "config-key", (gpointer) config_key);
+  g_signal_connect (row, "notify::active", G_CALLBACK (on_meta_switch_changed), self);
+  adw_preferences_group_add (group, GTK_WIDGET (row));
+}
+
 void
 stampy_show_preferences (StampyWindow *self)
 {
@@ -308,13 +441,13 @@ stampy_show_preferences (StampyWindow *self)
   AdwSwitchRow *oversubscribe_switch;
   AdwSwitchRow *native_meta_switch;
   AdwSwitchRow *batch_exiftool_switch;
-  AdwSwitchRow *title_exp_toggle;
-  AdwSwitchRow *xlsx_time_toggle;
   AdwSwitchRow *landscape_switch;
   AdwSwitchRow *auto_folder_switch;
   GtkWidget *threads_row;
   gboolean use_all;
   gboolean use_native;
+  gboolean default_meta_text;
+  gboolean default_meta_time;
   int n_cpus;
   char *subtitle;
 
@@ -326,6 +459,8 @@ stampy_show_preferences (StampyWindow *self)
     n_cpus = 1;
   use_all = stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_USE_ALL_CORES, TRUE);
   use_native = stampy_config_get_bool (STAMPY_CONFIG_KEY_USE_NATIVE_METADATA, FALSE);
+  default_meta_text = stampy_config_get_bool (STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, FALSE);
+  default_meta_time = stampy_config_get_bool (STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE);
 
   dialog = ADW_DIALOG (adw_preferences_dialog_new ());
   adw_dialog_set_title (dialog, "Preferences");
@@ -416,23 +551,142 @@ stampy_show_preferences (StampyWindow *self)
   g_signal_connect (native_meta_switch, "notify::active",
                     G_CALLBACK (on_use_native_metadata_changed), batch_exiftool_switch);
 
-  /* Title experimental toggle */
-  title_exp_toggle = ADW_SWITCH_ROW (adw_switch_row_new ());
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (title_exp_toggle), "Watermark injection to metadata");
-  adw_switch_row_set_active (title_exp_toggle,
-      stampy_config_get_bool (STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, FALSE));
-  g_signal_connect (title_exp_toggle, "notify::active",
-                    G_CALLBACK (on_title_exp_toggle_changed), self);
-
-  /* Image properties metadata injection toggle */
+  /* Image properties metadata injection toggles */
   exp_group = ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
   adw_preferences_group_set_title (exp_group, "Image Properties");
+  adw_preferences_group_set_description (exp_group,
+      "Choose which metadata fields to inject into exported images.");
   adw_preferences_page_add (page, exp_group);
 
-  adw_preferences_group_add (exp_group, GTK_WIDGET (title_exp_toggle));
-  gtk_widget_set_tooltip_text (GTK_WIDGET (title_exp_toggle),
-      "When enabled, DOCX watermark text will be injected as image title/description metadata. "
-      "This is an experimental feature.");
+  add_meta_switch_row (exp_group, self, "Title",
+                       "Inject watermark text into Title (XPTitle, XMP)",
+                       STAMPY_CONFIG_KEY_META_TITLE,
+                       default_meta_text);
+
+  add_meta_switch_row (exp_group, self, "Subject",
+                       "Inject watermark text into Subject (XPSubject, XMP)",
+                       STAMPY_CONFIG_KEY_META_SUBJECT,
+                       default_meta_text);
+
+  add_meta_switch_row (exp_group, self, "Tags",
+                       "Inject watermark text into Tags (XPKeywords, IPTC)",
+                       STAMPY_CONFIG_KEY_META_TAGS,
+                       default_meta_text);
+
+  add_meta_switch_row (exp_group, self, "Comments",
+                       "Inject watermark text into Comments and Description",
+                       STAMPY_CONFIG_KEY_META_COMMENTS,
+                       default_meta_text);
+
+  /* Date with expander dropdown and 3-option toggle group switcher */
+  {
+    AdwExpanderRow *date_exp = ADW_EXPANDER_ROW (adw_expander_row_new ());
+    GtkWidget *date_switch = gtk_switch_new ();
+    AdwPreferencesRow *source_row = ADW_PREFERENCES_ROW (adw_preferences_row_new ());
+    GtkWidget *row_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 10);
+    GtkWidget *header_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 2);
+    GtkWidget *lbl_title = gtk_label_new ("Date source");
+    GtkWidget *lbl_sub = gtk_label_new ("Grab date from selected source");
+    gboolean date_active = stampy_config_get_bool (STAMPY_CONFIG_KEY_META_DATE, default_meta_time);
+    char *curr_source = stampy_config_get_string (STAMPY_CONFIG_KEY_META_DATE_SOURCE, "auto");
+
+    ensure_preferences_css ();
+
+    adw_preferences_row_set_title (ADW_PREFERENCES_ROW (date_exp), "Date");
+    adw_expander_row_set_subtitle (date_exp, "Inject date into EXIF and IPTC");
+    gtk_widget_set_valign (date_switch, GTK_ALIGN_CENTER);
+    gtk_switch_set_active (GTK_SWITCH (date_switch), date_active);
+    adw_expander_row_add_suffix (date_exp, date_switch);
+    adw_expander_row_set_expanded (date_exp, date_active);
+
+    gtk_label_set_xalign (GTK_LABEL (lbl_title), 0.0);
+    gtk_label_set_xalign (GTK_LABEL (lbl_sub), 0.0);
+    gtk_widget_add_css_class (lbl_sub, "dim-label");
+    gtk_widget_add_css_class (lbl_sub, "caption");
+    gtk_box_append (GTK_BOX (header_box), lbl_title);
+    gtk_box_append (GTK_BOX (header_box), lbl_sub);
+    gtk_box_append (GTK_BOX (row_box), header_box);
+
+#if ADW_CHECK_VERSION(1, 7, 0)
+    {
+      GtkWidget *tg = adw_toggle_group_new ();
+      AdwToggle *t_auto = adw_toggle_new ();
+      AdwToggle *t_geo = adw_toggle_new ();
+      AdwToggle *t_wm = adw_toggle_new ();
+
+      adw_toggle_set_name (t_auto, "auto");
+      adw_toggle_set_label (t_auto, "Auto");
+      adw_toggle_set_tooltip (t_auto, "Auto-detect date from geolocation, watermark, or photo");
+      adw_toggle_group_add (ADW_TOGGLE_GROUP (tg), t_auto);
+
+      adw_toggle_set_name (t_geo, "geolocation");
+      adw_toggle_set_label (t_geo, "Geolocation");
+      adw_toggle_set_tooltip (t_geo, "Grab date from XLSX / GPS geolocation");
+      adw_toggle_group_add (ADW_TOGGLE_GROUP (tg), t_geo);
+
+      adw_toggle_set_name (t_wm, "watermark");
+      adw_toggle_set_label (t_wm, "Watermark");
+      adw_toggle_set_tooltip (t_wm, "Grab date from DOCX watermark text");
+      adw_toggle_group_add (ADW_TOGGLE_GROUP (tg), t_wm);
+
+      adw_toggle_group_set_homogeneous (ADW_TOGGLE_GROUP (tg), TRUE);
+      adw_toggle_group_set_can_shrink (ADW_TOGGLE_GROUP (tg), FALSE);
+      gtk_widget_set_halign (tg, GTK_ALIGN_CENTER);
+      gtk_widget_set_valign (tg, GTK_ALIGN_CENTER);
+      gtk_widget_add_css_class (tg, "date-source-toggle-group");
+
+      if (g_ascii_strcasecmp (curr_source, "geolocation") == 0)
+        adw_toggle_group_set_active_name (ADW_TOGGLE_GROUP (tg), "geolocation");
+      else if (g_ascii_strcasecmp (curr_source, "watermark") == 0)
+        adw_toggle_group_set_active_name (ADW_TOGGLE_GROUP (tg), "watermark");
+      else
+        adw_toggle_group_set_active_name (ADW_TOGGLE_GROUP (tg), "auto");
+
+      g_signal_connect (tg, "notify::active-name", G_CALLBACK (on_date_source_changed), self);
+      gtk_box_append (GTK_BOX (row_box), tg);
+    }
+#else
+    {
+      GtkWidget *dropdown = gtk_drop_down_new_from_strings ((const char *[]) {
+        "Auto", "Geolocation", "Watermark", NULL
+      });
+      gtk_widget_set_halign (dropdown, GTK_ALIGN_CENTER);
+      gtk_widget_set_valign (dropdown, GTK_ALIGN_CENTER);
+      if (g_ascii_strcasecmp (curr_source, "geolocation") == 0)
+        gtk_drop_down_set_selected (GTK_DROP_DOWN (dropdown), 1);
+      else if (g_ascii_strcasecmp (curr_source, "watermark") == 0)
+        gtk_drop_down_set_selected (GTK_DROP_DOWN (dropdown), 2);
+      else
+        gtk_drop_down_set_selected (GTK_DROP_DOWN (dropdown), 0);
+      g_signal_connect (dropdown, "notify::selected", G_CALLBACK (on_date_source_changed), self);
+      gtk_box_append (GTK_BOX (row_box), dropdown);
+    }
+#endif
+    g_free (curr_source);
+
+    gtk_widget_set_margin_top (row_box, 10);
+    gtk_widget_set_margin_bottom (row_box, 12);
+    gtk_widget_set_margin_start (row_box, 12);
+    gtk_widget_set_margin_end (row_box, 12);
+
+    adw_preferences_row_set_title (source_row, "Date source");
+    gtk_list_box_row_set_activatable (GTK_LIST_BOX_ROW (source_row), FALSE);
+    gtk_list_box_row_set_selectable (GTK_LIST_BOX_ROW (source_row), FALSE);
+    gtk_list_box_row_set_child (GTK_LIST_BOX_ROW (source_row), row_box);
+
+    gtk_widget_set_sensitive (GTK_WIDGET (source_row), date_active);
+    g_object_set_data (G_OBJECT (date_switch), "source-row", source_row);
+    g_object_set_data (G_OBJECT (date_switch), "expander-row", date_exp);
+    g_signal_connect (date_switch, "notify::active", G_CALLBACK (on_date_switch_toggled), self);
+
+    adw_expander_row_add_row (date_exp, GTK_WIDGET (source_row));
+    adw_preferences_group_add (exp_group, GTK_WIDGET (date_exp));
+  }
+
+  add_meta_switch_row (exp_group, self, "Time",
+                       "Inject clock time from XLSX into EXIF and IPTC",
+                       STAMPY_CONFIG_KEY_META_TIME,
+                       default_meta_time);
 
   /* Additional settings */
   extra_group = ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
@@ -465,18 +719,6 @@ stampy_show_preferences (StampyWindow *self)
   g_signal_connect (auto_folder_switch, "notify::active",
                     G_CALLBACK (on_auto_folder_changed), self);
   adw_preferences_group_add (extra_group, GTK_WIDGET (auto_folder_switch));
-
-  /* XLSX clock injection toggle */
-  xlsx_time_toggle = ADW_SWITCH_ROW (adw_switch_row_new ());
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (xlsx_time_toggle), "XLSX clock injection to EXIF");
-  adw_switch_row_set_active (xlsx_time_toggle,
-      stampy_config_get_bool (STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE));
-  g_signal_connect (xlsx_time_toggle, "notify::active",
-                    G_CALLBACK (on_xlsx_time_exif_toggled), self);
-  adw_preferences_group_add (exp_group, GTK_WIDGET (xlsx_time_toggle));
-  gtk_widget_set_tooltip_text (GTK_WIDGET (xlsx_time_toggle),
-      "When enabled, XLSX clock/jam column time will be injected as EXIF "
-      "DateTimeOriginal and DateTimeDigitized. This is an experimental feature.");
 
   /* Programmatic dialogs need no close-handler unref (unlike the
    * builder-based shortcuts dialog); unref'ing here double-frees. */

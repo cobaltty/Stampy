@@ -1188,7 +1188,7 @@ static void on_clear_all_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 /* Shows the "What's New" dialog. */
-#define STAMPY_RELEASE_DATE "2026-10-20"
+#define STAMPY_RELEASE_DATE "2026-10-25"
 
 static GtkWidget *whats_new_bullet(const char *text) {
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -1273,12 +1273,12 @@ static void on_whats_new_activated(GSimpleAction *action, GVariant *parameter, g
     gtk_widget_set_hexpand(content, TRUE);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), content);
 
-    gtk_box_append(GTK_BOX(content), whats_new_heading("Increments support"));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Added support for increments."));
-    gtk_box_append(GTK_BOX(content), whats_new_heading("Quality of life"));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Quality-of-life improvements across the app."));
-    gtk_box_append(GTK_BOX(content), whats_new_heading("Fixes"));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Various bug fixes."));
+    gtk_box_append(GTK_BOX(content), whats_new_heading("Metadata Injection"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Fine-tune metadata injection with toggles for Title, Subject, Tags, Date, and Time."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Configurable Date source switcher (Auto, Geolocation, Watermark)."));
+    gtk_box_append(GTK_BOX(content), whats_new_heading("Data Validation & Formats"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Dynamic missing data checks tailored to folder structure mode (Regular vs. PU)."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Added CSV geolocation parser with flexible date support."));
 
     adw_dialog_present(dialog, GTK_WIDGET(self));
 }

@@ -13,6 +13,8 @@ typedef struct {
     double longitude; /* Column X */
     double latitude;  /* Column Y */
     double azimuth_raw;  /* Column Azh */
+    double time_val;
+    char date_str[16];
 } GeolocationEntry;
 
 struct _StampyWindow {

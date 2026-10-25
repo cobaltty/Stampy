@@ -130,9 +130,11 @@ static int scan_excel_column_map(const char *xml_buf, GPtrArray *shared_strings,
                  * photo-id header, so keep that legacy mapping intact. */
                 field_type = (col_letter == 'B') ? 5 : 0;
             } else if (g_strcmp0(clean, "kodepu") == 0 ||
+                       g_strcmp0(clean, "namapu") == 0 ||
                        g_strcmp0(clean, "kode") == 0 ||
                        g_strcmp0(clean, "kodeunit") == 0 ||
-                       g_strcmp0(clean, "unit") == 0) {
+                       g_strcmp0(clean, "unit") == 0 ||
+                       (strstr(clean, "pu") != NULL && strstr(clean, "no") == NULL)) {
                 field_type = 5; /* PU group code */
             } else if (g_strcmp0(clean, "no") == 0 || g_strcmp0(clean, "nopu") == 0 ||
                        g_strcmp0(clean, "nomor") == 0 || g_strcmp0(clean, "id") == 0 ||
@@ -159,6 +161,9 @@ static int scan_excel_column_map(const char *xml_buf, GPtrArray *shared_strings,
                        strstr(clean, "waktu") != NULL || strstr(clean, "clock") != NULL ||
                        strstr(clean, "pukul") != NULL) {
                 field_type = 4; /* Time */
+            } else if (strstr(clean, "tanggal") != NULL || strstr(clean, "tgl") != NULL ||
+                       strstr(clean, "date") != NULL) {
+                field_type = 6; /* Date */
             }
 
             if (field_type >= 0 && out_map->count < 16) {
@@ -278,7 +283,86 @@ static double parse_azimuth_string(const char *str) {
     return g_ascii_strtod(buf, NULL);
 }
 
-/* Parses an XLSX file via its raw XML parts (shared strings, auto-swapped lat/lon). */
+static gboolean parse_date_string(const char *str, char out[16]) {
+    int a = 0, b = 0, c = 0;
+    int y = 0, m = 0, d = 0;
+    char *extracted = NULL;
+
+    if (!str || !*str) return FALSE;
+
+    if (stampy_extract_docx_date(str, &extracted) && extracted) {
+        g_strlcpy(out, extracted, 16);
+        g_free(extracted);
+        return TRUE;
+    }
+
+    if (sscanf(str, "%d/%d/%d", &a, &b, &c) == 3 ||
+        sscanf(str, "%d-%d-%d", &a, &b, &c) == 3 ||
+        sscanf(str, "%d.%d.%d", &a, &b, &c) == 3) {
+        if (a > 1000) {
+            y = a;
+            if (b > 12) { d = b; m = c; }
+            else { m = b; d = c; }
+        } else if (c > 1000) {
+            y = c;
+            if (a > 12) {
+                d = a; m = b;
+            } else if (b > 12) {
+                m = a; d = b;
+            } else {
+                m = a; d = b;
+            }
+        } else if (a > 31) {
+            y = (a < 70) ? (2000 + a) : (1900 + a);
+            m = b; d = c;
+        } else if (c > 31) {
+            y = (c < 70) ? (2000 + c) : (1900 + c);
+            d = a; m = b;
+        }
+        if (y > 1900 && y < 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+            snprintf(out, 16, "%04d:%02d:%02d", y, m, d);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static GPtrArray *parse_csv_row(const char *line, char sep) {
+    GPtrArray *tokens = g_ptr_array_new_with_free_func(g_free);
+    GString *cur = g_string_new("");
+    gboolean in_quotes = FALSE;
+    const char *p = line;
+
+    while (*p) {
+        if (*p == '"') {
+            if (in_quotes && *(p + 1) == '"') {
+                g_string_append_c(cur, '"');
+                p += 2;
+                continue;
+            }
+            in_quotes = !in_quotes;
+        } else if (*p == sep && !in_quotes) {
+            char *s = g_strdup(cur->str);
+            g_strstrip(s);
+            g_ptr_array_add(tokens, s);
+            g_string_truncate(cur, 0);
+        } else if ((*p == '\r' || *p == '\n') && !in_quotes) {
+            break;
+        } else {
+            g_string_append_c(cur, *p);
+        }
+        p++;
+    }
+    {
+        char *s = g_strdup(cur->str);
+        g_strstrip(s);
+        g_ptr_array_add(tokens, s);
+    }
+    g_string_free(cur, TRUE);
+    return tokens;
+}
+
+/* Parses an XLSX or CSV file for geolocation coordinates, azimuth, date, and time. */
 void parse_excel_file(StampyWindow *self, GFile *file) {
     char *path = NULL;
     char cmd[1024];
@@ -295,19 +379,184 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
     if (!path) return;
 
     lower_path = g_utf8_strdown(path, -1);
-    if (!g_str_has_suffix(lower_path, ".xlsx") && !g_str_has_suffix(lower_path, ".xls")) {
-        stampy_append_log(self, "[WARN] Not a valid Excel file!");
+    if (!g_str_has_suffix(lower_path, ".xlsx") && !g_str_has_suffix(lower_path, ".xls") && !g_str_has_suffix(lower_path, ".csv")) {
+        stampy_append_log(self, "[WARN] Not a valid Excel or CSV file!");
         g_free(lower_path);
         g_free(path);
         return;
     }
-    g_free(lower_path);
 
     if (!self->geo_table) {
         self->geo_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     } else {
         g_hash_table_remove_all(self->geo_table);
     }
+
+    if (g_str_has_suffix(lower_path, ".csv")) {
+        char line_buf[4096];
+        int col_types[64];
+        int num_cols = 0;
+        gboolean first_row = TRUE;
+        char sep = ',';
+
+        stampy_append_log(self, "[INFO] Reading Geolocation CSV file...");
+        fp = fopen(path, "r");
+        if (!fp) {
+            stampy_append_log(self, "[WARN] Could not open CSV file!");
+            g_free(lower_path);
+            g_free(path);
+            return;
+        }
+
+        while (fgets(line_buf, sizeof(line_buf), fp)) {
+            GPtrArray *tokens;
+            int c;
+            int current_id = 0;
+            double current_lon = 0.0, current_lat = 0.0, current_azimuth = 0.0, current_time = 0.0;
+            char current_pu[64] = {0};
+            char current_date[16] = {0};
+            gboolean has_id = FALSE, has_lon = FALSE, has_lat = FALSE;
+
+            if (first_row) {
+                if (strchr(line_buf, ';') != NULL && strchr(line_buf, ',') == NULL) {
+                    sep = ';';
+                }
+            }
+            tokens = parse_csv_row(line_buf, sep);
+            if (!tokens || tokens->len == 0) {
+                if (tokens) g_ptr_array_unref(tokens);
+                continue;
+            }
+
+            if (first_row) {
+                num_cols = (int)tokens->len;
+                if (num_cols > 64) num_cols = 64;
+                for (c = 0; c < num_cols; c++) {
+                    const char *h = g_ptr_array_index(tokens, c);
+                    char clean[64] = {0};
+                    int clen = 0;
+                    for (const char *p = h; *p && clen < (int)sizeof(clean) - 1; p++) {
+                        if (g_ascii_isalnum(*p)) clean[clen++] = g_ascii_tolower(*p);
+                    }
+                    clean[clen] = '\0';
+                    col_types[c] = -1;
+                    if (g_strcmp0(clean, "pu") == 0) {
+                        col_types[c] = (c == 1) ? 5 : 0;
+                    } else if (g_strcmp0(clean, "kodepu") == 0 ||
+                               g_strcmp0(clean, "namapu") == 0 ||
+                               g_strcmp0(clean, "kode") == 0 ||
+                               g_strcmp0(clean, "kodeunit") == 0 ||
+                               g_strcmp0(clean, "unit") == 0 ||
+                               (strstr(clean, "pu") != NULL && strstr(clean, "no") == NULL)) {
+                        col_types[c] = 5;
+                    } else if (g_strcmp0(clean, "no") == 0 || g_strcmp0(clean, "nopu") == 0 ||
+                               g_strcmp0(clean, "nomor") == 0 || g_strcmp0(clean, "id") == 0 ||
+                               g_strcmp0(clean, "number") == 0 || g_strcmp0(clean, "idfoto") == 0 ||
+                               g_strcmp0(clean, "photoid") == 0) {
+                        col_types[c] = 0;
+                    } else if (g_strcmp0(clean, "x") == 0 || strstr(clean, "long") != NULL ||
+                               strstr(clean, "bujur") != NULL || strstr(clean, "east") != NULL ||
+                               g_str_has_prefix(clean, "x")) {
+                        col_types[c] = 1;
+                    } else if (g_strcmp0(clean, "y") == 0 || strstr(clean, "lat") != NULL ||
+                               strstr(clean, "lintang") != NULL || strstr(clean, "north") != NULL ||
+                               g_str_has_prefix(clean, "y")) {
+                        col_types[c] = 2;
+                    } else if (strstr(clean, "azm") != NULL || strstr(clean, "azh") != NULL ||
+                               strstr(clean, "azim") != NULL || strstr(clean, "bearing") != NULL ||
+                               strstr(clean, "arah") != NULL || strstr(clean, "sudut") != NULL ||
+                               strstr(clean, "kompas") != NULL || strstr(clean, "compass") != NULL ||
+                               strstr(clean, "head") != NULL || strstr(clean, "derajat") != NULL ||
+                               g_strcmp0(clean, "deg") == 0 || g_strcmp0(clean, "degree") == 0 ||
+                               g_strcmp0(clean, "degrees") == 0 || g_str_has_prefix(clean, "deg")) {
+                        col_types[c] = 3;
+                    } else if (strstr(clean, "jam") != NULL || strstr(clean, "time") != NULL ||
+                               strstr(clean, "waktu") != NULL || strstr(clean, "clock") != NULL ||
+                               strstr(clean, "pukul") != NULL) {
+                        col_types[c] = 4;
+                    } else if (strstr(clean, "tanggal") != NULL || strstr(clean, "tgl") != NULL ||
+                               strstr(clean, "date") != NULL) {
+                        col_types[c] = 6;
+                    }
+                }
+                first_row = FALSE;
+                g_ptr_array_unref(tokens);
+                continue;
+            }
+
+            for (c = 0; c < (int)tokens->len && c < num_cols; c++) {
+                const char *val_str = g_ptr_array_index(tokens, c);
+                int ft = col_types[c];
+                if (ft == 0) {
+                    current_id = atoi(val_str);
+                    has_id = TRUE;
+                } else if (ft == 1) {
+                    current_lon = parse_coord_string(val_str);
+                    has_lon = TRUE;
+                } else if (ft == 2) {
+                    current_lat = parse_coord_string(val_str);
+                    has_lat = TRUE;
+                } else if (ft == 3) {
+                    current_azimuth = parse_azimuth_string(val_str);
+                } else if (ft == 4) {
+                    int h = 0, m = 0, s = 0;
+                    if (sscanf(val_str, "%d:%d:%d", &h, &m, &s) >= 2) {
+                        current_time = (h * 3600.0 + m * 60.0 + s) / 86400.0;
+                    } else {
+                        current_time = g_ascii_strtod(val_str, NULL);
+                    }
+                } else if (ft == 5) {
+                    g_strlcpy(current_pu, val_str, sizeof(current_pu));
+                    g_strstrip(current_pu);
+                } else if (ft == 6) {
+                    parse_date_string(val_str, current_date);
+                }
+            }
+            g_ptr_array_unref(tokens);
+
+            if (has_id && has_lat && has_lon && current_id > 0) {
+                GeolocationEntry *entry;
+                char *key_str;
+
+                if (fabs(current_lon) < 90.0 && fabs(current_lat) > 90.0) {
+                    double temp = current_lon;
+                    current_lon = current_lat;
+                    current_lat = temp;
+                }
+
+                entry = g_new0(GeolocationEntry, 1);
+                entry->no = current_id;
+                g_strlcpy(entry->pu_code, current_pu, sizeof(entry->pu_code));
+                entry->longitude = current_lon;
+                entry->latitude = current_lat;
+                entry->azimuth_raw = current_azimuth;
+                entry->time_val = current_time;
+                if (current_date[0] != '\0') {
+                    g_strlcpy(entry->date_str, current_date, sizeof(entry->date_str));
+                }
+
+                key_str = stampy_make_geo_key(current_pu, current_id);
+                g_hash_table_insert(self->geo_table, key_str, entry);
+                loaded_count++;
+            }
+        }
+        fclose(fp);
+
+        g_free(lower_path);
+        g_free(path);
+
+        if (loaded_count > 0) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "[INFO] Geolocation loaded %d entries from CSV.", loaded_count);
+            stampy_show_toast(self, "Geolocation CSV loaded!");
+            stampy_append_log(self, msg);
+        } else {
+            stampy_append_log(self, "[WARN] Failed to parse entries from CSV.");
+        }
+        return;
+    }
+
+    g_free(lower_path);
 
     stampy_append_log(self, "[INFO] Reading Excel structure by cell reference...");
 
@@ -456,7 +705,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                 col_map.count = 6;
                 stampy_append_log(self, "[INFO] Using default column mapping: A=No B=PU C=X D=Y E=Azimuth");
             } else {
-                const char *f_names[] = {"No", "Lon", "Lat", "Azimuth", "Time", "PU"};
+                const char *f_names[] = {"No", "Lon", "Lat", "Azimuth", "Time", "PU", "Date"};
                 GString *map_str = g_string_new("[INFO] Excel columns mapped: ");
 
                 if (self->banner_critical_coords) {
@@ -466,7 +715,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
 
                 for (k = 0; k < col_map.count; k++) {
                     int ft = col_map.entries[k].field_type;
-                    if (ft >= 0 && ft <= 5) {
+                    if (ft >= 0 && ft <= 6) {
                         g_string_append_printf(map_str, "%c=%s ",
                                                col_map.entries[k].col_letter, f_names[ft]);
                     }
@@ -485,6 +734,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                 double current_azimuth = 0.0;
                 double current_time = 0.0;
                 char current_pu[64] = {0};
+                char current_date[16] = {0};
                 gboolean has_id = FALSE, has_lon = FALSE, has_lat = FALSE;
                 char *cell_p;
 
@@ -535,6 +785,8 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                                             } else {
                                                 val = g_ascii_strtod(cell_str, NULL);
                                             }
+                                        } else if (field_type == 6) {
+                                            parse_date_string(cell_str, current_date);
                                         } else {
                                             val = parse_coord_string(cell_str);
                                         }
@@ -558,6 +810,23 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                                             val = (h * 3600.0 + m * 60.0 + s) / 86400.0;
                                         } else {
                                             val = g_ascii_strtod(val_str, NULL);
+                                        }
+                                    } else if (field_type == 6) {
+                                        val = g_ascii_strtod(val_str, NULL);
+                                        if (val > 30000.0 && val < 60000.0) {
+                                            GDateTime *base = g_date_time_new_local(1899, 12, 30, 0, 0, 0);
+                                            if (base) {
+                                                GDateTime *dt = g_date_time_add_days(base, (gint)val);
+                                                if (dt) {
+                                                    gchar *fmt = g_date_time_format(dt, "%Y:%m:%d");
+                                                    if (fmt) {
+                                                        g_strlcpy(current_date, fmt, sizeof(current_date));
+                                                        g_free(fmt);
+                                                    }
+                                                    g_date_time_unref(dt);
+                                                }
+                                                g_date_time_unref(base);
+                                            }
                                         }
                                     } else {
                                         val = g_ascii_strtod(val_str, NULL);
@@ -601,6 +870,9 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                     entry->latitude = current_lat;
                     entry->azimuth_raw = current_azimuth;
                     entry->time_val = current_time;
+                    if (current_date[0] != '\0') {
+                        g_strlcpy(entry->date_str, current_date, sizeof(entry->date_str));
+                    }
 
                     key_str = stampy_make_geo_key(current_pu, current_id);
                     g_hash_table_insert(self->geo_table, key_str, entry);
@@ -1114,7 +1386,7 @@ static gboolean on_xlsx_drop(GtkDropTarget *target, const GValue *value, double 
                 GFile *file = G_FILE(files->data);
                 char *path = g_file_get_path(file);
 
-                if (path && (g_str_has_suffix(path, ".xlsx") || g_str_has_suffix(path, ".xls"))) {
+                if (path && (g_str_has_suffix(path, ".xlsx") || g_str_has_suffix(path, ".xls") || g_str_has_suffix(path, ".csv"))) {
                     char *basename = NULL;
 
                     if (self->file_geolocation) g_object_unref(self->file_geolocation);
@@ -1128,7 +1400,7 @@ static gboolean on_xlsx_drop(GtkDropTarget *target, const GValue *value, double 
                     }
                     g_free(basename);
 
-                    stampy_show_toast(self, "Geolocation XLSX loaded!");
+                    stampy_show_toast(self, "Geolocation file loaded!");
                     stampy_append_log(self, "[INFO] Geolocation file loaded via Drag & Drop.");
                     stampy_render_live_preview(self);
                     stampy_update_clear_button_visibility(self);
@@ -1282,7 +1554,7 @@ static void on_xlsx_file_opened(GObject *source, GAsyncResult *res, gpointer use
         }
         g_free(basename);
 
-        stampy_show_toast(self, "Geolocation XLSX selected!");
+        stampy_show_toast(self, "Geolocation file selected!");
         stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
         stampy_check_missing_data(self);
@@ -1295,7 +1567,7 @@ void stampy_open_geolocation_picker(StampyWindow *self) {
     if (!self) return;
 
     dialog = gtk_file_dialog_new();
-    gtk_file_dialog_set_title(dialog, "Select Geolocation XLSX File");
+    gtk_file_dialog_set_title(dialog, "Select Geolocation File (XLSX, CSV)");
     gtk_file_dialog_open(dialog, GTK_WINDOW(self), NULL, on_xlsx_file_opened, self);
 }
 

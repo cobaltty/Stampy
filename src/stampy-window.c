@@ -42,6 +42,20 @@ static void apply_custom_css(void) {
         "}"
         "banner#stampy_banner_red > revealer > widget button {"
         "  color: #ffffff;"
+        "}"
+        ".missing-badge, label.missing-badge {"
+        "  padding: 2px 10px;"
+        "  border-radius: 999px;"
+        "  font-size: 0.85em;"
+        "  font-weight: 600;"
+        "  background-color: #fde8e8;"
+        "  color: #c01c28;"
+        "}"
+        "@media (prefers-color-scheme: dark) {"
+        "  .missing-badge, label.missing-badge {"
+        "    background-color: rgba(192, 28, 40, 0.25);"
+        "    color: #ff7b82;"
+        "  }"
         "}";
 
     gtk_css_provider_load_from_string(provider, css);

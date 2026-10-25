@@ -1071,12 +1071,13 @@ void stampy_auto_detect_companion_files(StampyWindow *self, GSList *files) {
                     stampy_append_log(self, "[INFO] Watermark DOCX auto-detected.");
                     changed = TRUE;
                 } else if ((g_str_has_suffix(lower, ".xlsx") ||
-                            g_str_has_suffix(lower, ".xls")) && !self->file_geolocation) {
+                            g_str_has_suffix(lower, ".xls") ||
+                            g_str_has_suffix(lower, ".csv")) && !self->file_geolocation) {
                     self->file_geolocation = g_file_get_child(dir, name);
                     if (self->lbl_geolocation)
                         gtk_label_set_text(GTK_LABEL(self->lbl_geolocation), name);
                     parse_excel_file(self, self->file_geolocation);
-                    stampy_append_log(self, "[INFO] Geolocation XLSX auto-detected.");
+                    stampy_append_log(self, "[INFO] Geolocation file auto-detected.");
                     changed = TRUE;
                 }
                 g_free(lower);
@@ -1277,7 +1278,11 @@ typedef struct {
     int photo_id;
     gboolean missing_id;
     gboolean missing_gps;
-    gboolean missing_wm;
+    gboolean missing_coords;
+    gboolean missing_degree;
+    gboolean missing_text;
+    gboolean missing_index;
+    gboolean missing_date;
 } MissingDataItem;
 
 static void missing_data_item_free(gpointer data) {
@@ -1288,15 +1293,278 @@ static void missing_data_item_free(gpointer data) {
     }
 }
 
+static gboolean stampy_is_file_in_pu_mode(StampyWindow *self, GFile *file) {
+    GFile *parent;
+    gboolean in_pu = FALSE;
+
+    if (!file) return FALSE;
+    parent = g_file_get_parent(file);
+    if (parent) {
+        char *pname = g_file_get_basename(parent);
+        if (pname) {
+            if (is_pu_folder_name(pname)) {
+                in_pu = TRUE;
+            }
+            g_free(pname);
+        }
+
+        if (!in_pu && self->import_root) {
+            if (!g_file_equal(parent, self->import_root) &&
+                g_file_has_prefix(file, self->import_root)) {
+                in_pu = TRUE;
+            }
+        }
+        g_object_unref(parent);
+    }
+    if (!in_pu && self->import_root) {
+        char *rname = g_file_get_basename(self->import_root);
+        if (rname) {
+            if (is_pu_folder_name(rname)) {
+                in_pu = TRUE;
+            }
+            g_free(rname);
+        }
+    }
+    return in_pu;
+}
+
+static gboolean stampy_detect_is_pu_mode(StampyWindow *self) {
+    guint i;
+    if (!self || !self->image_files || self->image_files->len == 0)
+        return FALSE;
+
+    if (self->pu_folders && self->pu_folders->len > 0) {
+        for (i = 0; i < self->pu_folders->len; i++) {
+            const char *pu = g_ptr_array_index(self->pu_folders, i);
+            if (is_pu_folder_name(pu)) return TRUE;
+        }
+    }
+
+    if (self->import_root) {
+        char *rname = g_file_get_basename(self->import_root);
+        if (rname) {
+            gboolean is_pu = is_pu_folder_name(rname);
+            g_free(rname);
+            if (is_pu) return TRUE;
+        }
+    }
+
+    for (i = 0; i < self->image_files->len; i++) {
+        GFile *file = g_ptr_array_index(self->image_files, i);
+        if (stampy_is_file_in_pu_mode(self, file))
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+static gboolean line_has_coord_pattern(const char *l) {
+    gboolean has_ns = FALSE;
+    gboolean has_ew = FALSE;
+    const char *p;
+
+    if (!l) return FALSE;
+    for (p = l; *p; p++) {
+        char c = *p;
+        if (c == 'S' || c == 'N' || c == 's' || c == 'n') {
+            const char *q = p - 1;
+            while (q >= l && (*q == ' ' || *q == '\t')) q--;
+            if (q >= l && (g_ascii_isdigit(*q) || *q == '.' || *q == ',' || *q == '\'' || *q == '"' || (guchar)*q >= 0x80)) {
+                has_ns = TRUE;
+            }
+        } else if (c == 'E' || c == 'W' || c == 'e' || c == 'w') {
+            const char *q = p - 1;
+            while (q >= l && (*q == ' ' || *q == '\t')) q--;
+            if (q >= l && (g_ascii_isdigit(*q) || *q == '.' || *q == ',' || *q == '\'' || *q == '"' || (guchar)*q >= 0x80)) {
+                has_ew = TRUE;
+            }
+        }
+    }
+    return (has_ns && has_ew);
+}
+
+static gboolean watermark_has_coords(const char *text) {
+    char **lines;
+    gboolean has = FALSE;
+    int j;
+
+    if (!text || !*text) return FALSE;
+    lines = g_strsplit(text, "\n", -1);
+    if (!lines) return FALSE;
+
+    for (j = 0; lines[j] != NULL; j++) {
+        const char *l = lines[j];
+        gboolean has_deg = (strstr(l, "°") != NULL || strstr(l, "º") != NULL);
+        gboolean has_dir = (strchr(l, 'N') != NULL || strchr(l, 'S') != NULL ||
+                            strchr(l, 'E') != NULL || strchr(l, 'W') != NULL ||
+                            strchr(l, 'n') != NULL || strchr(l, 's') != NULL ||
+                            strchr(l, 'e') != NULL || strchr(l, 'w') != NULL);
+        gboolean has_comma = (strchr(l, ',') != NULL);
+
+        if (line_has_coord_pattern(l)) {
+            has = TRUE;
+            break;
+        }
+
+        if ((has_comma && has_dir) || (has_deg && (has_comma || has_dir))) {
+            has = TRUE;
+            break;
+        }
+
+        {
+            double lat = 0.0, lon = 0.0;
+            if (sscanf(l, "%lf , %lf", &lat, &lon) == 2 ||
+                sscanf(l, "%lf, %lf", &lat, &lon) == 2 ||
+                sscanf(l, "%lf %lf", &lat, &lon) == 2) {
+                if (fabs(lat) > 0.0001 && fabs(lon) > 0.0001) {
+                    has = TRUE;
+                    break;
+                }
+            }
+        }
+    }
+    g_strfreev(lines);
+    return has;
+}
+
+static gboolean watermark_has_date(const char *text);
+
+static gboolean watermark_has_degree(const char *text, const char *azimuth_str) {
+    char **lines;
+    int j;
+
+    if (azimuth_str && *azimuth_str != '\0') {
+        const char *p = azimuth_str;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p && strpbrk(p, "0123456789°º") != NULL) return TRUE;
+    }
+    if (!text || !*text) return FALSE;
+    lines = g_strsplit(text, "\n", -1);
+    if (!lines) return FALSE;
+
+    for (j = 0; lines[j] != NULL; j++) {
+        const char *l = lines[j];
+        if (strstr(l, "°") != NULL || strstr(l, "º") != NULL ||
+            strstr(l, "deg") != NULL || strstr(l, "arah") != NULL ||
+            strstr(l, "azm") != NULL || strstr(l, "azimuth") != NULL) {
+            if (strchr(l, ',') == NULL) {
+                g_strfreev(lines);
+                return TRUE;
+            }
+        }
+    }
+    g_strfreev(lines);
+    return FALSE;
+}
+
+static gboolean watermark_has_text(const char *text) {
+    char *desc = NULL;
+    char **lines;
+    gboolean found = FALSE;
+    int j;
+
+    if (!text || !*text) return FALSE;
+    if (stampy_extract_project_description(text, &desc) && desc) {
+        gboolean has = (strlen(g_strstrip(desc)) > 0);
+        g_free(desc);
+        if (has) return TRUE;
+    }
+
+    lines = g_strsplit(text, "\n", -1);
+    if (!lines) return FALSE;
+    for (j = 0; lines[j] != NULL; j++) {
+        char *l = g_strstrip(g_strdup(lines[j]));
+        if (strlen(l) > 3 &&
+            g_ascii_strncasecmp(l, "index", 5) != 0 &&
+            !watermark_has_coords(l) &&
+            !watermark_has_date(l)) {
+            for (const char *p = l; *p; p++) {
+                if (g_ascii_isalpha(*p)) {
+                    found = TRUE;
+                    break;
+                }
+            }
+        }
+        g_free(l);
+        if (found) break;
+    }
+    g_strfreev(lines);
+    return found;
+}
+
+static gboolean watermark_has_index(const char *text) {
+    char **lines;
+    gboolean has = FALSE;
+    int j;
+
+    if (!text || !*text) return FALSE;
+    lines = g_strsplit(text, "\n", -1);
+    if (!lines) return FALSE;
+
+    for (j = 0; lines[j] != NULL; j++) {
+        char *l = g_strstrip(g_strdup(lines[j]));
+        if (g_ascii_strncasecmp(l, "index number:", 13) == 0 ||
+            g_ascii_strncasecmp(l, "index number", 12) == 0 ||
+            g_ascii_strncasecmp(l, "index:", 6) == 0 ||
+            g_ascii_strncasecmp(l, "index no:", 9) == 0 ||
+            g_ascii_strncasecmp(l, "index no.", 9) == 0 ||
+            g_ascii_strncasecmp(l, "index", 5) == 0) {
+            const char *p = l;
+            while (*p && !g_ascii_isdigit(*p)) p++;
+            if (*p) {
+                has = TRUE;
+                g_free(l);
+                break;
+            }
+        }
+        g_free(l);
+    }
+    g_strfreev(lines);
+    return has;
+}
+
+static gboolean watermark_has_date(const char *text) {
+    char *out_d = NULL;
+    char **lines;
+    int j;
+
+    if (!text || !*text) return FALSE;
+    if (stampy_extract_docx_date(text, &out_d) && out_d) {
+        g_free(out_d);
+        return TRUE;
+    }
+
+    lines = g_strsplit(text, "\n", -1);
+    if (!lines) return FALSE;
+
+    for (j = 0; lines[j] != NULL; j++) {
+        const char *l = lines[j];
+        int d1 = 0, d2 = 0, d3 = 0;
+        int h = 0, m = 0, s = 0;
+        if (sscanf(l, "%d-%d-%d", &d1, &d2, &d3) == 3 ||
+            sscanf(l, "%d/%d/%d", &d1, &d2, &d3) == 3 ||
+            sscanf(l, "%d.%d.%d", &d1, &d2, &d3) == 3) {
+            if ((d1 > 1900 && d1 < 2100) || (d3 > 1900 && d3 < 2100)) {
+                g_strfreev(lines);
+                return TRUE;
+            }
+        }
+        if (sscanf(l, "%d:%d:%d", &h, &m, &s) >= 2) {
+            if (h >= 0 && h < 24 && m >= 0 && m < 60) {
+                g_strfreev(lines);
+                return TRUE;
+            }
+        }
+    }
+    g_strfreev(lines);
+    return FALSE;
+}
+
 void stampy_check_missing_data(StampyWindow *self) {
     guint total, i;
-    guint count_missing_id = 0;
-    guint count_missing_gps = 0;
-    guint count_missing_wm = 0;
+    gboolean is_pu_mode = FALSE;
     gboolean has_geo_expected;
     gboolean has_wm_expected;
-    GString *bmsg;
-    gboolean first = TRUE;
 
     if (!self || !self->banner_missing_data) return;
 
@@ -1315,6 +1583,7 @@ void stampy_check_missing_data(StampyWindow *self) {
         return;
     }
 
+    is_pu_mode = stampy_detect_is_pu_mode(self);
     total = self->image_files->len;
 
     if (self->missing_data_items) {
@@ -1331,7 +1600,16 @@ void stampy_check_missing_data(StampyWindow *self) {
         int pid;
         gboolean m_id;
         gboolean m_gps = FALSE;
-        gboolean m_wm = FALSE;
+        gboolean m_coords = FALSE;
+        gboolean m_degree = FALSE;
+        gboolean m_text = FALSE;
+        gboolean m_index = FALSE;
+        gboolean m_date = FALSE;
+        char *custom_text = NULL;
+        char *azimuth_str = NULL;
+        GeolocationEntry geo_entry;
+        gboolean has_geo = FALSE;
+        gboolean file_is_pu;
 
         if (!path) continue;
         name = strrchr(path, '/');
@@ -1339,55 +1617,74 @@ void stampy_check_missing_data(StampyWindow *self) {
         pu_code = stampy_get_pu_code_for_file(file);
         pid = stampy_extract_id_from_filename(name);
         m_id = (pid <= 0);
+        file_is_pu = is_pu_mode || stampy_is_file_in_pu_mode(self, file);
 
         if (has_geo_expected) {
-            if (m_id || !stampy_lookup_geolocation_data(self, pu_code, pid, NULL)) {
+            has_geo = (pid > 0 && stampy_lookup_geolocation_data(self, pu_code, pid, &geo_entry));
+            if (!has_geo || m_id) {
                 m_gps = TRUE;
             }
         }
 
+        if (has_wm_expected && pid > 0) {
+            stampy_lookup_docx_data(self, pu_code, name, &custom_text, &azimuth_str);
+        }
+
         if (has_wm_expected) {
-            if (m_id || !stampy_lookup_docx_data(self, pu_code, name, NULL, NULL)) {
-                m_wm = TRUE;
+            gboolean has_coords = (custom_text && watermark_has_coords(custom_text)) ||
+                (has_geo && (fabs(geo_entry.latitude) > 0.0001 || fabs(geo_entry.longitude) > 0.0001));
+            gboolean has_degree = (custom_text && watermark_has_degree(custom_text, azimuth_str)) ||
+                (has_geo && geo_entry.azimuth_raw > 0.0);
+            gboolean has_text = (custom_text && watermark_has_text(custom_text));
+            gboolean has_index = (custom_text && watermark_has_index(custom_text));
+            gboolean has_date = (custom_text && watermark_has_date(custom_text)) ||
+                (has_geo && (geo_entry.date_str[0] != '\0' || geo_entry.time_val > 0.0));
+
+            m_coords = !has_coords;
+            m_degree = !has_degree;
+            m_text = !has_text;
+            if (file_is_pu) {
+                m_index = !has_index;
+                m_date = !has_date;
             }
         }
+
+        g_free(custom_text);
+        g_free(azimuth_str);
         g_free(pu_code);
 
-        if (m_gps || m_wm || m_id) {
+        if (m_gps || m_id || m_coords || m_degree || m_text || m_index || m_date) {
             MissingDataItem *item = g_new0(MissingDataItem, 1);
             item->filename = g_strdup(name);
             item->photo_id = pid;
             item->missing_id = m_id;
             item->missing_gps = m_gps;
-            item->missing_wm = m_wm;
+            item->missing_coords = m_coords;
+            item->missing_degree = m_degree;
+            item->missing_text = m_text;
+            item->missing_index = m_index;
+            item->missing_date = m_date;
             g_ptr_array_add(self->missing_data_items, item);
-
-            if (m_id) count_missing_id++;
-            if (m_gps) count_missing_gps++;
-            if (m_wm) count_missing_wm++;
         }
     }
 
     if (self->missing_data_items->len > 0) {
-        bmsg = g_string_new("Warning: Expected data missing (");
-        if (count_missing_gps > 0) {
-            g_string_append_printf(bmsg, "%u GPS", count_missing_gps);
-            first = FALSE;
-        }
-        if (count_missing_wm > 0) {
-            if (!first) g_string_append(bmsg, ", ");
-            g_string_append_printf(bmsg, "%u Watermark", count_missing_wm);
-            first = FALSE;
-        }
-        if (count_missing_id > 0) {
-            if (!first) g_string_append(bmsg, ", ");
-            g_string_append_printf(bmsg, "%u Code/ID", count_missing_id);
-        }
-        g_string_append(bmsg, ")");
+        guint count = self->missing_data_items->len;
+        char *bmsg;
 
-        adw_banner_set_title(ADW_BANNER(self->banner_missing_data), bmsg->str);
+        if (is_pu_mode) {
+            bmsg = (count == 1)
+                ? g_strdup("Warning: 1 photo missing required PU data")
+                : g_strdup_printf("Warning: %u photos missing required PU data", count);
+        } else {
+            bmsg = (count == 1)
+                ? g_strdup("Warning: 1 photo missing required data")
+                : g_strdup_printf("Warning: %u photos missing required data", count);
+        }
+
+        adw_banner_set_title(ADW_BANNER(self->banner_missing_data), bmsg);
         adw_banner_set_revealed(ADW_BANNER(self->banner_missing_data), TRUE);
-        g_string_free(bmsg, TRUE);
+        g_free(bmsg);
     } else {
         adw_banner_set_revealed(ADW_BANNER(self->banner_missing_data), FALSE);
     }
@@ -1411,8 +1708,8 @@ void stampy_on_missing_data_banner_clicked(AdwBanner *banner, gpointer user_data
 
     dialog = adw_dialog_new();
     adw_dialog_set_title(dialog, "Expected Data Summary");
-    adw_dialog_set_content_width(dialog, 480);
-    adw_dialog_set_content_height(dialog, 520);
+    adw_dialog_set_content_width(dialog, 520);
+    adw_dialog_set_content_height(dialog, 540);
 
     toolbar = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
     header = ADW_HEADER_BAR(adw_header_bar_new());
@@ -1428,9 +1725,9 @@ void stampy_on_missing_data_banner_clicked(AdwBanner *banner, gpointer user_data
     gtk_widget_set_margin_start(content, 12);
     gtk_widget_set_margin_end(content, 12);
 
-    text = g_strdup_printf("%u photo%s missing expected data (%u total loaded):",
+    text = g_strdup_printf("%u photo%s with incomplete data (%u total loaded):",
                            self->missing_data_items->len,
-                           self->missing_data_items->len == 1 ? " is" : "s are",
+                           self->missing_data_items->len == 1 ? "" : "s",
                            self->image_files ? self->image_files->len : 0);
     heading = gtk_label_new(text);
     gtk_label_set_xalign(GTK_LABEL(heading), 0.0);
@@ -1445,33 +1742,59 @@ void stampy_on_missing_data_banner_clicked(AdwBanner *banner, gpointer user_data
 
     for (i = 0; i < self->missing_data_items->len; i++) {
         MissingDataItem *item = g_ptr_array_index(self->missing_data_items, i);
-        GtkWidget *row = gtk_list_box_row_new();
-        GtkWidget *row_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-        GtkWidget *lbl_name = gtk_label_new(item->filename);
-        GString *issues = g_string_new("");
-        GtkWidget *lbl_issues;
+        AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
+        GString *missing_str = g_string_new("");
+        gboolean first = TRUE;
+        GtkWidget *badge = NULL;
 
-        gtk_label_set_xalign(GTK_LABEL(lbl_name), 0.0);
-        gtk_widget_set_hexpand(lbl_name, TRUE);
-        gtk_box_append(GTK_BOX(row_box), lbl_name);
+        adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), item->filename);
 
-        if (item->missing_id) g_string_append(issues, "[No Code/ID] ");
-        if (item->missing_gps) g_string_append(issues, "[Missing GPS] ");
-        if (item->missing_wm) g_string_append(issues, "[Missing Watermark] ");
+        if (item->missing_id) {
+            g_string_append(missing_str, "ID");
+            first = FALSE;
+        }
+        if (item->missing_gps) {
+            if (!first) g_string_append(missing_str, ", ");
+            g_string_append(missing_str, "GPS");
+            first = FALSE;
+        }
+        if (item->missing_coords) {
+            if (!first) g_string_append(missing_str, ", ");
+            g_string_append(missing_str, "coords");
+            first = FALSE;
+        }
+        if (item->missing_degree) {
+            if (!first) g_string_append(missing_str, ", ");
+            g_string_append(missing_str, "degree");
+            first = FALSE;
+        }
+        if (item->missing_text) {
+            if (!first) g_string_append(missing_str, ", ");
+            g_string_append(missing_str, "text");
+            first = FALSE;
+        }
+        if (item->missing_index) {
+            if (!first) g_string_append(missing_str, ", ");
+            g_string_append(missing_str, "index");
+            first = FALSE;
+        }
+        if (item->missing_date) {
+            if (!first) g_string_append(missing_str, ", ");
+            g_string_append(missing_str, "date");
+            first = FALSE;
+        }
 
-        lbl_issues = gtk_label_new(issues->str);
-        gtk_widget_add_css_class(lbl_issues, "dim-label");
-        gtk_label_set_xalign(GTK_LABEL(lbl_issues), 1.0);
-        gtk_box_append(GTK_BOX(row_box), lbl_issues);
-        g_string_free(issues, TRUE);
+        adw_action_row_set_subtitle(row, missing_str->str);
+        adw_action_row_set_subtitle_lines(row, 2);
+        g_string_free(missing_str, TRUE);
 
-        gtk_widget_set_margin_start(row_box, 12);
-        gtk_widget_set_margin_end(row_box, 12);
-        gtk_widget_set_margin_top(row_box, 8);
-        gtk_widget_set_margin_bottom(row_box, 8);
+        badge = gtk_label_new("Missing");
+        gtk_widget_set_valign(badge, GTK_ALIGN_CENTER);
+        gtk_widget_add_css_class(badge, "missing-badge");
+        gtk_widget_add_css_class(badge, "missing-badge-error");
+        adw_action_row_add_suffix(row, badge);
 
-        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), row_box);
-        gtk_list_box_append(GTK_LIST_BOX(list), row);
+        gtk_list_box_append(GTK_LIST_BOX(list), GTK_WIDGET(row));
     }
 
     scrolled = gtk_scrolled_window_new();
