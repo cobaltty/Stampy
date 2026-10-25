@@ -1,8 +1,5 @@
 name: Flatpak
 
-# Pushing a tag like v1.5.000.beta builds the app from that tag and
-# publishes it to the GitHub Pages flatpak remote (OTA updates).
-# The tag MUST match meson.build (minus the leading "v"), enforced below.
 on:
   push:
     tags:
@@ -10,19 +7,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  flatpak:
-    name: Build and publish
+  build:
+    name: Build Flatpak
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -62,9 +52,22 @@ jobs:
           GPGKey=$GPGKEY
           EOF
 
-      - uses: actions/upload-pages-artifact@v3
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
         with:
           path: repo
 
-      - id: deployment
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
