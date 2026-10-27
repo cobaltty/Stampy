@@ -1743,50 +1743,10 @@ void stampy_on_missing_data_banner_clicked(AdwBanner *banner, gpointer user_data
     for (i = 0; i < self->missing_data_items->len; i++) {
         MissingDataItem *item = g_ptr_array_index(self->missing_data_items, i);
         AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
-        GString *missing_str = g_string_new("");
-        gboolean first = TRUE;
         GtkWidget *badge = NULL;
 
         adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), item->filename);
-
-        if (item->missing_id) {
-            g_string_append(missing_str, "ID");
-            first = FALSE;
-        }
-        if (item->missing_gps) {
-            if (!first) g_string_append(missing_str, ", ");
-            g_string_append(missing_str, "GPS");
-            first = FALSE;
-        }
-        if (item->missing_coords) {
-            if (!first) g_string_append(missing_str, ", ");
-            g_string_append(missing_str, "coords");
-            first = FALSE;
-        }
-        if (item->missing_degree) {
-            if (!first) g_string_append(missing_str, ", ");
-            g_string_append(missing_str, "degree");
-            first = FALSE;
-        }
-        if (item->missing_text) {
-            if (!first) g_string_append(missing_str, ", ");
-            g_string_append(missing_str, "text");
-            first = FALSE;
-        }
-        if (item->missing_index) {
-            if (!first) g_string_append(missing_str, ", ");
-            g_string_append(missing_str, "index");
-            first = FALSE;
-        }
-        if (item->missing_date) {
-            if (!first) g_string_append(missing_str, ", ");
-            g_string_append(missing_str, "date");
-            first = FALSE;
-        }
-
-        adw_action_row_set_subtitle(row, missing_str->str);
-        adw_action_row_set_subtitle_lines(row, 2);
-        g_string_free(missing_str, TRUE);
+        /* ponytail: field subtitle breakdown omitted; re-add if users require per-row missing field tags */
 
         badge = gtk_label_new("Missing");
         gtk_widget_set_valign(badge, GTK_ALIGN_CENTER);
