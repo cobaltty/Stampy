@@ -79,6 +79,13 @@
                 <property name="revealed">false</property>
               </object>
             </child>
+            <child>
+              <object class="AdwBanner" id="banner_critical_docx">
+                <property name="title">Warning: No watermark data</property>
+                <property name="button-label">See details</property>
+                <property name="revealed">false</property>
+              </object>
+            </child>
           </object>
         </child>
 

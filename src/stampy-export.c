@@ -1258,11 +1258,7 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                 }
 
                 if (ctx->snapshot.meta_date) {
-                    char *geo_date = NULL;
-
-                    if (has_geo && geo_entry.date_str[0] != '\0') {
-                        geo_date = g_strdup(geo_entry.date_str);
-                    }
+                    const char *geo_date = (has_geo && geo_entry.date_str[0] != '\0') ? geo_entry.date_str : NULL;
 
                     if (ctx->snapshot.meta_date_source == 1) {
                         /* Geolocation */
@@ -1296,7 +1292,6 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                             }
                         }
                     }
-                    g_free(geo_date);
                 } else if (existing_date[0] != '\0') {
                     chosen_date = existing_date;
                 }
@@ -2018,6 +2013,9 @@ void stampy_start_export(StampyWindow *window_self) {
         stampy_show_toast(window_self, "No images loaded in list!");
         return;
     }
+
+    /* Refresh destination so re-exporting uses a new collision-free stamped folder. */
+    stampy_prepare_default_export_folder(window_self);
 
     /* Auto-created <folder>_stamped target skips the folder picker. */
     if (window_self->default_export_folder) {

@@ -183,6 +183,11 @@ static void stampy_window_dispose(GObject *object) {
         self->critical_coords_details = NULL;
     }
 
+    if (self->critical_docx_details) {
+        g_free(self->critical_docx_details);
+        self->critical_docx_details = NULL;
+    }
+
     if (self->docx_cached_lines) {
         g_strfreev(self->docx_cached_lines);
         self->docx_cached_lines = NULL;
@@ -244,6 +249,7 @@ static void stampy_window_class_init(StampyWindowClass *klass) {
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_landscape);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_missing_data);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_critical_coords);
+    gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_critical_docx);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, left_stack);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, drop_area_frame);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, box_pu_selector);
@@ -451,6 +457,8 @@ static void stampy_window_init(StampyWindow *self) {
     update_banner_theme(self);
     if (self->banner_critical_coords)
         gtk_widget_set_name(self->banner_critical_coords, "stampy_banner_red");
+    if (self->banner_critical_docx)
+        gtk_widget_set_name(self->banner_critical_docx, "stampy_banner_red");
     g_signal_connect_object(adw_style_manager_get_default(), "notify::dark",
                             G_CALLBACK(on_style_dark_changed), self, 0);
 

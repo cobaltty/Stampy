@@ -113,6 +113,8 @@ struct _StampyWindow {
     GPtrArray *missing_data_items;
     GtkWidget *banner_critical_coords;
     char *critical_coords_details;
+    GtkWidget *banner_critical_docx;
+    char *critical_docx_details;
     char *docx_cached_path;
     char **docx_cached_lines;
     GHashTable *docx_table;
@@ -164,12 +166,14 @@ void stampy_check_horizontal_photos(StampyWindow *self);
 void stampy_check_missing_data(StampyWindow *self);
 void stampy_on_missing_data_banner_clicked(AdwBanner *banner, gpointer user_data);
 void stampy_on_critical_coords_banner_clicked(AdwBanner *banner, gpointer user_data);
+void stampy_on_critical_docx_banner_clicked(AdwBanner *banner, gpointer user_data);
 void stampy_invalidate_docx_cache(StampyWindow *self);
 void stampy_auto_detect_companion_files(StampyWindow *self, GSList *files);
 void stampy_prepare_default_export_folder(StampyWindow *self);
 void stampy_set_import_root(StampyWindow *self, GFile *file);
 void stampy_on_landscape_banner_clicked(AdwBanner *banner, gpointer user_data);
 void parse_excel_file(StampyWindow *self, GFile *file);
+void parse_docx_file(StampyWindow *self, GFile *file);
 void stampy_open_image_picker(StampyWindow *self);
 
 

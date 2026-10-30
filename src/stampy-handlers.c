@@ -1172,6 +1172,11 @@ static void on_clear_all_clicked(GtkButton *btn, gpointer user_data) {
     }
     g_clear_pointer(&self->critical_coords_details, g_free);
 
+    if (self->banner_critical_docx) {
+        adw_banner_set_revealed(ADW_BANNER(self->banner_critical_docx), FALSE);
+    }
+    g_clear_pointer(&self->critical_docx_details, g_free);
+
     if (self->lbl_watermark) gtk_label_set_text(GTK_LABEL(self->lbl_watermark), "Add Watermark(.docx)");
     if (self->lbl_geolocation) gtk_label_set_text(GTK_LABEL(self->lbl_geolocation), "Add Geolocation(.xlsx)");
 

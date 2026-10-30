@@ -287,6 +287,7 @@ static gboolean parse_date_string(const char *str, char out[16]) {
     int a = 0, b = 0, c = 0;
     int y = 0, m = 0, d = 0;
     char *extracted = NULL;
+    double num_val;
 
     if (!str || !*str) return FALSE;
 
@@ -294,6 +295,24 @@ static gboolean parse_date_string(const char *str, char out[16]) {
         g_strlcpy(out, extracted, 16);
         g_free(extracted);
         return TRUE;
+    }
+
+    num_val = g_ascii_strtod(str, NULL);
+    if (num_val > 30000.0 && num_val < 60000.0) {
+        GDateTime *base = g_date_time_new_utc(1899, 12, 30, 0, 0, 0);
+        if (base) {
+            GDateTime *dt = g_date_time_add_days(base, (gint)num_val);
+            if (dt) {
+                gchar *fmt = g_date_time_format(dt, "%Y:%m:%d");
+                if (fmt) {
+                    g_strlcpy(out, fmt, 16);
+                    g_free(fmt);
+                }
+                g_date_time_unref(dt);
+            }
+            g_date_time_unref(base);
+            if (out[0] != '\0') return TRUE;
+        }
     }
 
     if (sscanf(str, "%d/%d/%d", &a, &b, &c) == 3 ||
@@ -814,7 +833,7 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                                     } else if (field_type == 6) {
                                         val = g_ascii_strtod(val_str, NULL);
                                         if (val > 30000.0 && val < 60000.0) {
-                                            GDateTime *base = g_date_time_new_local(1899, 12, 30, 0, 0, 0);
+                                            GDateTime *base = g_date_time_new_utc(1899, 12, 30, 0, 0, 0);
                                             if (base) {
                                                 GDateTime *dt = g_date_time_add_days(base, (gint)val);
                                                 if (dt) {
@@ -827,6 +846,8 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
                                                 }
                                                 g_date_time_unref(base);
                                             }
+                                        } else {
+                                            parse_date_string(val_str, current_date);
                                         }
                                     } else {
                                         val = g_ascii_strtod(val_str, NULL);
@@ -934,11 +955,23 @@ static gboolean is_supported_image_name(const char *name) {
 /* Directories created by Stampy's own export. Scanning them again feeds
  * previously exported copies back into the list as duplicates. */
 static gboolean is_export_output_dir(const char *name) {
-    size_t len;
+    const char *pos;
+    const char *tail;
     if (!name) return FALSE;
-    len = strlen(name);
-    if (len < 8) return FALSE;
-    return (g_ascii_strcasecmp(name + len - 8, "_stamped") == 0);
+    pos = g_strrstr(name, "_stamped");
+    if (!pos) pos = g_strrstr(name, "_Stamped");
+    if (!pos) pos = g_strrstr(name, "_STAMPED");
+    if (!pos) return FALSE;
+
+    tail = pos + 8;
+    if (*tail == '\0') return TRUE;
+    if (*tail == '(') {
+        tail++;
+        if (!g_ascii_isdigit(*tail)) return FALSE;
+        while (g_ascii_isdigit(*tail)) tail++;
+        if (*tail == ')' && *(tail + 1) == '\0') return TRUE;
+    }
+    return FALSE;
 }
 
 /* Compass asset folders (e.g. "Kompas Monev", "compass") must not be scanned as photos. */
@@ -1148,6 +1181,7 @@ static void scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
         stampy_show_toast(self, "Images added!");
         stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
+        stampy_check_missing_data(self);
     }
 
     g_clear_error(&error);
@@ -1348,6 +1382,8 @@ static gboolean on_docx_drop(GtkDropTarget *target, const GValue *value, double 
                     if (self->file_watermark) g_object_unref(self->file_watermark);
                     self->file_watermark = g_object_ref(file);
 
+                    parse_docx_file(self, file);
+
                     basename = g_file_get_basename(file);
                     if (self->lbl_watermark && basename) {
                         gtk_label_set_text(GTK_LABEL(self->lbl_watermark), basename);
@@ -1356,10 +1392,10 @@ static gboolean on_docx_drop(GtkDropTarget *target, const GValue *value, double 
 
                     stampy_show_toast(self, "Watermark DOCX set!");
                     stampy_append_log(self, "[INFO] Watermark file updated via Drag & Drop.");
-                    stampy_invalidate_docx_cache(self);
                     stampy_render_live_preview(self);
                     stampy_update_clear_button_visibility(self);
                     stampy_check_missing_data(self);
+                    stampy_prepare_default_export_folder(self);
                     g_free(path);
                     g_slist_free(files);
                     return TRUE;
@@ -1506,6 +1542,8 @@ static void on_docx_file_opened(GObject *source, GAsyncResult *res, gpointer use
         if (self->file_watermark) g_object_unref(self->file_watermark);
         self->file_watermark = g_object_ref(file);
 
+        parse_docx_file(self, file);
+
         basename = g_file_get_basename(file);
         if (self->lbl_watermark && basename) {
             gtk_label_set_text(GTK_LABEL(self->lbl_watermark), basename);
@@ -1513,10 +1551,10 @@ static void on_docx_file_opened(GObject *source, GAsyncResult *res, gpointer use
         g_free(basename);
 
         stampy_show_toast(self, "Watermark file selected!");
-        stampy_invalidate_docx_cache(self);
         stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
         stampy_check_missing_data(self);
+        stampy_prepare_default_export_folder(self);
     }
 }
 
@@ -1599,6 +1637,11 @@ void stampy_setup_file_handlers_and_dnd(StampyWindow *self) {
     if (self->banner_critical_coords) {
         g_signal_connect(self->banner_critical_coords, "button-clicked",
                          G_CALLBACK(stampy_on_critical_coords_banner_clicked), self);
+    }
+
+    if (self->banner_critical_docx) {
+        g_signal_connect(self->banner_critical_docx, "button-clicked",
+                         G_CALLBACK(stampy_on_critical_docx_banner_clicked), self);
     }
 
     if (self->file_listbox) {

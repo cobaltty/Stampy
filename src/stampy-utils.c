@@ -390,15 +390,14 @@ gboolean stampy_lookup_geolocation_data(StampyWindow *self, const char *pu_code,
     val = g_hash_table_lookup(self->geo_table, key);
     g_free(key);
 
-    /* Backward compatibility: id-only keys from legacy spreadsheets. */
-    if (!val) {
+    /* Backward compatibility: id-only keys only from legacy spreadsheets without PU. */
+    if (!val && (!pu_code || *pu_code == '\0')) {
         snprintf(id_str, sizeof(id_str), "%d", photo_id);
         val = g_hash_table_lookup(self->geo_table, id_str);
-    }
-
-    if (!val) {
-        snprintf(id_str, sizeof(id_str), "%d.0", photo_id);
-        val = g_hash_table_lookup(self->geo_table, id_str);
+        if (!val) {
+            snprintf(id_str, sizeof(id_str), "%d.0", photo_id);
+            val = g_hash_table_lookup(self->geo_table, id_str);
+        }
     }
 
     if (val) {
@@ -594,15 +593,18 @@ static void docx_block_entry_free(gpointer data) {
     }
 }
 
-/* Builds an in-memory hash index of the DOCX once, enabling O(1) lookups. */
-static void ensure_docx_index(StampyWindow *self) {
+/* Builds an in-memory hash index of the DOCX once, enabling O(1) lookups.
+ * ponytail: sequential block scan is fast for expected file sizes (<10MB); upgrade to SAX streaming if DOCX sizes exceed 100MB. */
+static int ensure_docx_index(StampyWindow *self) {
     char **lines;
     int i;
+    int loaded_count = 0;
 
-    if (!self || self->docx_table) return;
+    if (!self) return 0;
+    if (self->docx_table) return (int)g_hash_table_size(self->docx_table);
 
     lines = load_docx_lines(self);
-    if (!lines) return;
+    if (!lines) return 0;
 
     self->docx_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, docx_block_entry_free);
 
@@ -636,17 +638,89 @@ static void ensure_docx_index(StampyWindow *self) {
         key = stampy_make_geo_key(block_pu, photo_id);
         g_hash_table_insert(self->docx_table, key, entry);
 
-        /* Insert legacy id-only fallback if not already present */
-        snprintf(id_str, sizeof(id_str), "%d", photo_id);
-        if (!g_hash_table_contains(self->docx_table, id_str)) {
-            DocxBlockEntry *fallback_entry = g_new0(DocxBlockEntry, 1);
-            fallback_entry->text = g_strdup(entry->text);
-            fallback_entry->azimuth = g_strdup(entry->azimuth);
-            g_hash_table_insert(self->docx_table, g_strdup(id_str), fallback_entry);
+        /* Insert legacy id-only fallback only when block has no PU */
+        if (!block_pu || *block_pu == '\0') {
+            snprintf(id_str, sizeof(id_str), "%d", photo_id);
+            if (!g_hash_table_contains(self->docx_table, id_str)) {
+                DocxBlockEntry *fallback_entry = g_new0(DocxBlockEntry, 1);
+                fallback_entry->text = g_strdup(entry->text);
+                fallback_entry->azimuth = g_strdup(entry->azimuth);
+                g_hash_table_insert(self->docx_table, g_strdup(id_str), fallback_entry);
+            }
         }
 
         g_free(block_pu);
+        loaded_count++;
     }
+
+    return loaded_count;
+}
+
+/* Parses a DOCX file for watermark text entries and emits warning if empty. */
+void parse_docx_file(StampyWindow *self, GFile *file) {
+    char *path = NULL;
+    char *lower_path = NULL;
+    char *f_base = NULL;
+    int loaded_count = 0;
+
+    if (!self || !file) return;
+
+    path = g_file_get_path(file);
+    if (!path) return;
+
+    f_base = g_file_get_basename(file);
+    lower_path = g_utf8_strdown(path, -1);
+
+    if (!g_str_has_suffix(lower_path, ".docx")) {
+        char *b_title = g_strdup_printf("Critical: Not a valid DOCX file ('%s')", f_base ? f_base : "file");
+        if (self->banner_critical_docx) {
+            adw_banner_set_title(ADW_BANNER(self->banner_critical_docx), b_title);
+            adw_banner_set_revealed(ADW_BANNER(self->banner_critical_docx), TRUE);
+        }
+        g_free(b_title);
+        g_free(self->critical_docx_details);
+        self->critical_docx_details = g_strdup_printf(
+            "The selected file '%s' is not a valid Microsoft Word (.docx) document.",
+            f_base ? f_base : "file");
+        stampy_append_log(self, "[WARN] Not a valid DOCX file!");
+        g_free(lower_path);
+        g_free(path);
+        g_free(f_base);
+        return;
+    }
+    g_free(lower_path);
+    g_free(path);
+
+    stampy_invalidate_docx_cache(self);
+    stampy_append_log(self, "[INFO] Reading Watermark DOCX structure...");
+
+    loaded_count = ensure_docx_index(self);
+
+    if (loaded_count > 0) {
+        char msg[128];
+        if (self->banner_critical_docx) {
+            adw_banner_set_revealed(ADW_BANNER(self->banner_critical_docx), FALSE);
+        }
+        g_clear_pointer(&self->critical_docx_details, g_free);
+        snprintf(msg, sizeof(msg), "[INFO] Watermark loaded %d entries from DOCX.", loaded_count);
+        stampy_show_toast(self, "Watermark DOCX loaded!");
+        stampy_append_log(self, msg);
+    } else {
+        char *b_title = g_strdup_printf("Warning: No watermark data in '%s'", f_base ? f_base : "DOCX");
+        if (self->banner_critical_docx) {
+            adw_banner_set_title(ADW_BANNER(self->banner_critical_docx), b_title);
+            adw_banner_set_revealed(ADW_BANNER(self->banner_critical_docx), TRUE);
+        }
+        g_free(b_title);
+        g_free(self->critical_docx_details);
+        self->critical_docx_details = g_strdup_printf(
+            "Auto-parsing could not detect watermark entries in '%s':\n\n"
+            "• Missing: photo ID numbers or watermark blocks\n\n"
+            "Please ensure the document contains watermark text blocks preceded by photo ID numbers.",
+            f_base ? f_base : "DOCX");
+        stampy_append_log(self, "[WARN] Failed to parse watermark data from DOCX.");
+    }
+    g_free(f_base);
 }
 
 /* Looks up watermark text and azimuth for a (PU, No) photo via O(1) hash table. */
@@ -674,8 +748,8 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *pu_code, const 
     entry = (DocxBlockEntry *)g_hash_table_lookup(self->docx_table, key);
     g_free(key);
 
-    /* 2. Fallback to No-only key for legacy documents */
-    if (!entry) {
+    /* 2. Fallback to No-only key only for legacy non-PU documents */
+    if (!entry && (!pu_code || *pu_code == '\0')) {
         snprintf(id_str, sizeof(id_str), "%d", photo_id_val);
         entry = (DocxBlockEntry *)g_hash_table_lookup(self->docx_table, id_str);
     }
@@ -912,11 +986,23 @@ void stampy_populate_system_fonts(StampyWindow *self) {
 }
 
 static gboolean is_export_output_dir_name(const char *name) {
-    size_t len;
+    const char *pos;
+    const char *tail;
     if (!name) return FALSE;
-    len = strlen(name);
-    if (len < 8) return FALSE;
-    return (g_ascii_strcasecmp(name + len - 8, "_stamped") == 0);
+    pos = g_strrstr(name, "_stamped");
+    if (!pos) pos = g_strrstr(name, "_Stamped");
+    if (!pos) pos = g_strrstr(name, "_STAMPED");
+    if (!pos) return FALSE;
+
+    tail = pos + 8;
+    if (*tail == '\0') return TRUE;
+    if (*tail == '(') {
+        tail++;
+        if (!g_ascii_isdigit(*tail)) return FALSE;
+        while (g_ascii_isdigit(*tail)) tail++;
+        if (*tail == ')' && *(tail + 1) == '\0') return TRUE;
+    }
+    return FALSE;
 }
 
 static gboolean is_compass_dir_name(const char *name) {
@@ -1068,6 +1154,7 @@ void stampy_auto_detect_companion_files(StampyWindow *self, GSList *files) {
                     self->file_watermark = g_file_get_child(dir, name);
                     if (self->lbl_watermark)
                         gtk_label_set_text(GTK_LABEL(self->lbl_watermark), name);
+                    parse_docx_file(self, self->file_watermark);
                     stampy_append_log(self, "[INFO] Watermark DOCX auto-detected.");
                     changed = TRUE;
                 } else if ((g_str_has_suffix(lower, ".xlsx") ||
@@ -1093,7 +1180,6 @@ void stampy_auto_detect_companion_files(StampyWindow *self, GSList *files) {
     g_hash_table_unref(dirs);
 
     if (changed) {
-        stampy_invalidate_docx_cache(self);
         stampy_show_toast(self, "Companion files auto-loaded");
         stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
@@ -1125,6 +1211,29 @@ void stampy_set_import_root(StampyWindow *self, GFile *file) {
     }
     g_free(dir);
     g_free(path);
+}
+
+static gboolean directory_is_non_empty(GFile *file) {
+    GFileEnumerator *enumerator;
+    GFileInfo *info;
+    gboolean has_child = FALSE;
+
+    if (!file || !g_file_query_exists(file, NULL)) return FALSE;
+
+    enumerator = g_file_enumerate_children(file,
+                                          "standard::name",
+                                          G_FILE_QUERY_INFO_NONE,
+                                          NULL, NULL);
+    if (!enumerator) return FALSE;
+
+    info = g_file_enumerator_next_file(enumerator, NULL, NULL);
+    if (info) {
+        has_child = TRUE;
+        g_object_unref(info);
+    }
+    g_file_enumerator_close(enumerator, NULL, NULL);
+    g_object_unref(enumerator);
+    return has_child;
 }
 
 /* Creates <parent>/<import folder>_stamped as a sibling and remembers it. */
@@ -1170,19 +1279,35 @@ void stampy_prepare_default_export_folder(StampyWindow *self) {
 
     parent = g_path_get_dirname(root_path);
     folder_name = g_path_get_basename(root_path);
+
+    /* Check if <parent>/<folder_name>_stamped exists and is non-empty; increment counter if so. */
     stamped_path = g_strdup_printf("%s/%s_stamped", parent, folder_name);
     out = g_file_new_for_path(stamped_path);
 
+    if (directory_is_non_empty(out)) {
+        int counter = 1;
+        while (TRUE) {
+            g_object_unref(out);
+            g_free(stamped_path);
+            stamped_path = g_strdup_printf("%s/%s_stamped(%d)", parent, folder_name, counter);
+            out = g_file_new_for_path(stamped_path);
+            if (!directory_is_non_empty(out)) break;
+            counter++;
+        }
+    }
+
     if (g_file_query_exists(out, NULL) ||
         g_file_make_directory_with_parents(out, NULL, NULL)) {
+        char *out_base = g_file_get_basename(out);
         char *log_msg = g_strdup_printf("[INFO] Export folder: %s", stamped_path);
-        char *toast_msg = g_strdup_printf("Export folder: %s_stamped", folder_name);
+        char *toast_msg = g_strdup_printf("Export folder: %s", out_base ? out_base : stamped_path);
 
         g_set_object(&self->default_export_folder, out);
         stampy_append_log(self, log_msg);
         stampy_show_toast(self, toast_msg);
         if (self->btn_header_export)
             gtk_widget_set_tooltip_text(self->btn_header_export, stamped_path);
+        g_free(out_base);
         g_free(toast_msg);
         g_free(log_msg);
     } else {
@@ -1651,11 +1776,13 @@ void stampy_check_missing_data(StampyWindow *self) {
 
         g_free(custom_text);
         g_free(azimuth_str);
-        g_free(pu_code);
-
         if (m_gps || m_id || m_coords || m_degree || m_text || m_index || m_date) {
             MissingDataItem *item = g_new0(MissingDataItem, 1);
-            item->filename = g_strdup(name);
+            if (pu_code && *pu_code) {
+                item->filename = g_strdup_printf("%s / %s", pu_code, name);
+            } else {
+                item->filename = g_strdup(name);
+            }
             item->photo_id = pid;
             item->missing_id = m_id;
             item->missing_gps = m_gps;
@@ -1666,13 +1793,29 @@ void stampy_check_missing_data(StampyWindow *self) {
             item->missing_date = m_date;
             g_ptr_array_add(self->missing_data_items, item);
         }
+        g_free(pu_code);
     }
 
     if (self->missing_data_items->len > 0) {
         guint count = self->missing_data_items->len;
+        guint wm_missing = 0, geo_missing = 0;
         char *bmsg;
 
-        if (is_pu_mode) {
+        for (i = 0; i < count; i++) {
+            MissingDataItem *it = g_ptr_array_index(self->missing_data_items, i);
+            if (it->missing_text) wm_missing++;
+            if (it->missing_coords || it->missing_gps) geo_missing++;
+        }
+
+        if (wm_missing > 0 && geo_missing == 0) {
+            bmsg = (count == 1)
+                ? g_strdup("Warning: 1 photo missing watermark data in DOCX")
+                : g_strdup_printf("Warning: %u photos missing watermark data in DOCX", count);
+        } else if (geo_missing > 0 && wm_missing == 0) {
+            bmsg = (count == 1)
+                ? g_strdup("Warning: 1 photo missing coordinates in XLSX")
+                : g_strdup_printf("Warning: %u photos missing coordinates in XLSX", count);
+        } else if (is_pu_mode) {
             bmsg = (count == 1)
                 ? g_strdup("Warning: 1 photo missing required PU data")
                 : g_strdup_printf("Warning: %u photos missing required PU data", count);
@@ -1684,6 +1827,13 @@ void stampy_check_missing_data(StampyWindow *self) {
 
         adw_banner_set_title(ADW_BANNER(self->banner_missing_data), bmsg);
         adw_banner_set_revealed(ADW_BANNER(self->banner_missing_data), TRUE);
+
+        {
+            char log_msg[256];
+            snprintf(log_msg, sizeof(log_msg), "[WARN] %s", bmsg);
+            stampy_append_log(self, log_msg);
+        }
+
         g_free(bmsg);
     } else {
         adw_banner_set_revealed(ADW_BANNER(self->banner_missing_data), FALSE);
@@ -1745,8 +1895,23 @@ void stampy_on_missing_data_banner_clicked(AdwBanner *banner, gpointer user_data
         AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
         GtkWidget *badge = NULL;
 
+        GString *sub = g_string_new("");
+
         adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), item->filename);
-        /* ponytail: field subtitle breakdown omitted; re-add if users require per-row missing field tags */
+
+        if (item->missing_text) g_string_append(sub, "Watermark (DOCX)");
+        if (item->missing_coords || item->missing_gps) {
+            if (sub->len > 0) g_string_append(sub, ", ");
+            g_string_append(sub, "Coordinates (XLSX)");
+        }
+        if (item->missing_id) {
+            if (sub->len > 0) g_string_append(sub, ", ");
+            g_string_append(sub, "Photo ID");
+        }
+        if (sub->len > 0) {
+            adw_action_row_set_subtitle(row, sub->str);
+        }
+        g_string_free(sub, TRUE);
 
         badge = gtk_label_new("Missing");
         gtk_widget_set_valign(badge, GTK_ALIGN_CENTER);
@@ -1781,6 +1946,23 @@ void stampy_on_critical_coords_banner_clicked(AdwBanner *banner, gpointer user_d
               "Required coordinate columns (X, Y, or Azimuth) could not be detected from the spreadsheet headers.";
 
     alert = adw_alert_dialog_new("Critical: Missing Coordinates", details);
+    adw_alert_dialog_add_response(ADW_ALERT_DIALOG(alert), "ok", "OK");
+    adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "ok");
+    adw_dialog_present(alert, GTK_WIDGET(self));
+}
+
+void stampy_on_critical_docx_banner_clicked(AdwBanner *banner, gpointer user_data) {
+    StampyWindow *self = STAMPY_WINDOW(user_data);
+    AdwDialog *alert;
+    const char *details;
+
+    (void)banner;
+    if (!self) return;
+
+    details = self->critical_docx_details ? self->critical_docx_details :
+              "No watermark text entries could be detected from the DOCX file.";
+
+    alert = adw_alert_dialog_new("Missing Watermark Data", details);
     adw_alert_dialog_add_response(ADW_ALERT_DIALOG(alert), "ok", "OK");
     adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "ok");
     adw_dialog_present(alert, GTK_WIDGET(self));
