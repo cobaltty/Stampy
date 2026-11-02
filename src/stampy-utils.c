@@ -166,68 +166,53 @@ static gboolean is_pu_folder_name(const char *name) {
 }
 
 /* Reads the PU group name from the image's parent or ancestor folder.
- * Fast, allocation-free path scanning. */
+ * Fast path scanning, returning folder name only if matching PU format. */
 char *stampy_get_pu_code_for_file(GFile *file) {
     const char *path;
+    char *dyn_path = NULL;
     const char *last_slash;
-    const char *prev_slash;
+    const char *seg_end;
+    const char *seg_start;
+    char *result = NULL;
 
     if (!file) return NULL;
 
     path = g_file_peek_path(file);
     if (!path) {
-        GFile *p = g_file_get_parent(file);
-        char *pu = NULL;
-        if (p) {
-            char *b = g_file_get_basename(p);
-            g_object_unref(p);
-            if (b) {
-                pu = g_strdup(b);
-                g_strstrip(pu);
-                g_free(b);
-            }
-        }
-        return (pu && *pu != '\0') ? pu : NULL;
+        dyn_path = g_file_get_path(file);
+        path = dyn_path;
     }
+    if (!path) return NULL;
 
     last_slash = strrchr(path, '/');
-    if (!last_slash || last_slash == path) return NULL;
-
-    /* Scan backwards to extract the immediate parent folder name */
-    prev_slash = last_slash - 1;
-    while (prev_slash > path && *prev_slash != '/') prev_slash--;
-    if (*prev_slash == '/') prev_slash++;
-
-    if (last_slash > prev_slash) {
-        char *parent_name = g_strndup(prev_slash, last_slash - prev_slash);
-        g_strstrip(parent_name);
-
-        if (is_pu_folder_name(parent_name)) {
-            return parent_name;
-        }
-
-        /* Check grandparent if immediate parent does not start with PU */
-        if (prev_slash > path + 1) {
-            const char *gp_end = prev_slash - 1;
-            const char *gp_slash = gp_end - 1;
-            while (gp_slash > path && *gp_slash != '/') gp_slash--;
-            if (*gp_slash == '/') gp_slash++;
-            if (gp_end > gp_slash) {
-                char *gp_name = g_strndup(gp_slash, gp_end - gp_slash);
-                g_strstrip(gp_name);
-                if (is_pu_folder_name(gp_name)) {
-                    g_free(parent_name);
-                    return gp_name;
-                }
-                g_free(gp_name);
-            }
-        }
-
-        if (*parent_name != '\0') return parent_name;
-        g_free(parent_name);
+    if (!last_slash || last_slash == path) {
+        g_free(dyn_path);
+        return NULL;
     }
 
-    return NULL;
+    /* Scan backwards segment by segment through directory components */
+    seg_end = last_slash;
+    while (seg_end > path) {
+        seg_start = seg_end - 1;
+        while (seg_start > path && *seg_start != '/') seg_start--;
+        if (*seg_start == '/') seg_start++;
+
+        if (seg_end > seg_start) {
+            char *seg_name = g_strndup(seg_start, seg_end - seg_start);
+            g_strstrip(seg_name);
+            if (is_pu_folder_name(seg_name)) {
+                result = seg_name;
+                break;
+            }
+            g_free(seg_name);
+        }
+
+        if (seg_start <= path + 1) break;
+        seg_end = seg_start - 1;
+    }
+
+    g_free(dyn_path);
+    return result;
 }
 
 /* Extracts the relative export subpath from the PU folder down to the file's directory.
@@ -284,8 +269,6 @@ char *stampy_get_pu_rel_subpath_for_file(GFile *file) {
 
     if (pu_start && last_slash > pu_start) {
         rel_path = g_strndup(pu_start, last_slash - pu_start);
-    } else {
-        rel_path = stampy_get_pu_code_for_file(file);
     }
 
     g_free(dyn_path);
@@ -390,8 +373,8 @@ gboolean stampy_lookup_geolocation_data(StampyWindow *self, const char *pu_code,
     val = g_hash_table_lookup(self->geo_table, key);
     g_free(key);
 
-    /* Backward compatibility: id-only keys only from legacy spreadsheets without PU. */
-    if (!val && (!pu_code || *pu_code == '\0')) {
+    /* Fallback to id-only key if composite lookup was not found */
+    if (!val) {
         snprintf(id_str, sizeof(id_str), "%d", photo_id);
         val = g_hash_table_lookup(self->geo_table, id_str);
         if (!val) {
@@ -748,8 +731,8 @@ gboolean stampy_lookup_docx_data(StampyWindow *self, const char *pu_code, const 
     entry = (DocxBlockEntry *)g_hash_table_lookup(self->docx_table, key);
     g_free(key);
 
-    /* 2. Fallback to No-only key only for legacy non-PU documents */
-    if (!entry && (!pu_code || *pu_code == '\0')) {
+    /* 2. Fallback to No-only key when composite key not found (non-PU documents) */
+    if (!entry) {
         snprintf(id_str, sizeof(id_str), "%d", photo_id_val);
         entry = (DocxBlockEntry *)g_hash_table_lookup(self->docx_table, id_str);
     }
@@ -1417,37 +1400,14 @@ static void missing_data_item_free(gpointer data) {
 }
 
 static gboolean stampy_is_file_in_pu_mode(StampyWindow *self, GFile *file) {
-    GFile *parent;
-    gboolean in_pu = FALSE;
+    (void)self;
+    char *pu;
+    gboolean in_pu;
 
     if (!file) return FALSE;
-    parent = g_file_get_parent(file);
-    if (parent) {
-        char *pname = g_file_get_basename(parent);
-        if (pname) {
-            if (is_pu_folder_name(pname)) {
-                in_pu = TRUE;
-            }
-            g_free(pname);
-        }
-
-        if (!in_pu && self->import_root) {
-            if (!g_file_equal(parent, self->import_root) &&
-                g_file_has_prefix(file, self->import_root)) {
-                in_pu = TRUE;
-            }
-        }
-        g_object_unref(parent);
-    }
-    if (!in_pu && self->import_root) {
-        char *rname = g_file_get_basename(self->import_root);
-        if (rname) {
-            if (is_pu_folder_name(rname)) {
-                in_pu = TRUE;
-            }
-            g_free(rname);
-        }
-    }
+    pu = stampy_get_pu_code_for_file(file);
+    in_pu = (pu && *pu != '\0');
+    g_free(pu);
     return in_pu;
 }
 
@@ -1460,15 +1420,6 @@ static gboolean stampy_detect_is_pu_mode(StampyWindow *self) {
         for (i = 0; i < self->pu_folders->len; i++) {
             const char *pu = g_ptr_array_index(self->pu_folders, i);
             if (is_pu_folder_name(pu)) return TRUE;
-        }
-    }
-
-    if (self->import_root) {
-        char *rname = g_file_get_basename(self->import_root);
-        if (rname) {
-            gboolean is_pu = is_pu_folder_name(rname);
-            g_free(rname);
-            if (is_pu) return TRUE;
         }
     }
 

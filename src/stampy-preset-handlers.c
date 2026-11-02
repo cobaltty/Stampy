@@ -171,6 +171,7 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
     m_comm = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_COMMENTS, def_meta);
     m_date = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_DATE, def_time);
     m_time = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TIME, def_time);
+    gboolean m_remove_id = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID, FALSE);
     {
         g_autofree char *date_src = stampy_config_get_string(STAMPY_CONFIG_KEY_META_DATE_SOURCE, "auto");
 
@@ -186,7 +187,8 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
             "  \"t_stroke\": %s,\n  \"t_stroke_color\": \"%s\",\n  \"t_stroke_width\": %.1f,\n  \"t_color\": \"%s\",\n"
             "  \"metadata_inject\": %s,\n  \"xlsx_time_exif\": %s,\n"
             "  \"meta_title\": %s,\n  \"meta_subject\": %s,\n  \"meta_tags\": %s,\n  \"meta_comments\": %s,\n"
-            "  \"meta_date\": %s,\n  \"meta_date_source\": \"%s\",\n  \"meta_time\": %s\n}\n",
+            "  \"meta_date\": %s,\n  \"meta_date_source\": \"%s\",\n  \"meta_time\": %s,\n"
+            "  \"meta_remove_image_id\": %s\n}\n",
             (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_size)),
             gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_margin_x)),
             gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_margin_y)),
@@ -216,7 +218,8 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
             m_comm ? "true" : "false",
             m_date ? "true" : "false",
             (date_src && *date_src) ? date_src : "auto",
-            m_time ? "true" : "false"
+            m_time ? "true" : "false",
+            m_remove_id ? "true" : "false"
         );
     }
 
@@ -394,6 +397,11 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
         stampy_config_set_bool(STAMPY_CONFIG_KEY_META_TIME, strstr(content, "\"meta_time\": true") != NULL);
     else
         stampy_config_set_bool(STAMPY_CONFIG_KEY_META_TIME, legacy_time);
+
+    if (strstr(content, "\"meta_remove_image_id\":"))
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID, strstr(content, "\"meta_remove_image_id\": true") != NULL);
+    else
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID, FALSE);
 
     /* Text alignment. */
     if (strstr(content, "\"t_align\": \"left\"") || strstr(content, "\"alignment\": \"left\""))

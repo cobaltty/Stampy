@@ -51,6 +51,7 @@ typedef struct {
     gboolean meta_date;           /* inject DOCX date as EXIF/IPTC date */
     int meta_date_source;         /* 0: auto, 1: watermark, 2: geolocation */
     gboolean meta_time;           /* inject XLSX clock time as EXIF/IPTC time */
+    gboolean meta_remove_image_id; /* remove ImageUniqueID / ImageID metadata */
     gboolean use_native_metadata; /* use in-memory gexiv2 instead of exiftool */
     gboolean batch_exiftool;      /* run exiftool once with an argfile (-@) */
     GFile *file_compass;
@@ -394,6 +395,7 @@ static void snapshot_export_settings(StampyWindow *window_self, ExportSettingsSn
         g_free(src_str);
     }
     snap->meta_time = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TIME, snap->xlsx_time_exif);
+    snap->meta_remove_image_id = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID, FALSE);
     snap->use_native_metadata = stampy_config_get_bool(STAMPY_CONFIG_KEY_USE_NATIVE_METADATA, FALSE);
     snap->batch_exiftool = stampy_config_get_bool(STAMPY_CONFIG_KEY_BATCH_EXIFTOOL, FALSE);
 
@@ -1407,6 +1409,12 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                         gexiv2_metadata_try_clear_tag(meta, "Iptc.Application2.Keywords", NULL);
                     }
 
+                    if (ctx->snapshot.meta_remove_image_id) {
+                        gexiv2_metadata_try_clear_tag(meta, "Exif.Photo.ImageUniqueID", NULL);
+                        gexiv2_metadata_try_clear_tag(meta, "Exif.Image.ImageID", NULL);
+                        gexiv2_metadata_try_clear_tag(meta, "Xmp.exif.ImageUniqueID", NULL);
+                    }
+
                     if (new_dt[0] != '\0') {
                         gchar *tz = stampy_resolve_timezone_offset(meta);
                         char iso_dt[64];
@@ -1506,6 +1514,10 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                     fprintf(ctx->argfile_fp, "-XPKeywords=\n-XMP:Subject=\n-Keywords=\n");
                 }
 
+                if (ctx->snapshot.meta_remove_image_id) {
+                    fprintf(ctx->argfile_fp, "-ImageUniqueID=\n-XMP:ImageUniqueID=\n");
+                }
+
                 if (new_dt[0] != '\0') {
                     fprintf(ctx->argfile_fp, "-EXIF:DateTimeOriginal=%s\n", new_dt);
                     fprintf(ctx->argfile_fp, "-EXIF:CreateDate=%s\n", new_dt);
@@ -1588,6 +1600,10 @@ static void export_image_worker(gpointer data, gpointer user_data) {
 
                 if (!ctx->snapshot.meta_tags) {
                     g_string_append(cmd, "-XPKeywords= -XMP:Subject= -Keywords= ");
+                }
+
+                if (ctx->snapshot.meta_remove_image_id) {
+                    g_string_append(cmd, "-ImageUniqueID= -XMP:ImageUniqueID= ");
                 }
 
                 if (new_dt[0] != '\0') {

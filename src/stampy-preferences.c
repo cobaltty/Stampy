@@ -688,6 +688,11 @@ stampy_show_preferences (StampyWindow *self)
                        STAMPY_CONFIG_KEY_META_TIME,
                        default_meta_time);
 
+  add_meta_switch_row (exp_group, self, "Remove Image ID",
+                       "Strip Image ID (ImageUniqueID) metadata from exported photos",
+                       STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID,
+                       FALSE);
+
   /* Additional settings */
   extra_group = ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
   adw_preferences_group_set_title (extra_group, "Additional Settings");
