@@ -51,6 +51,11 @@ typedef struct {
     gboolean meta_date;           /* inject DOCX date as EXIF/IPTC date */
     int meta_date_source;         /* 0: auto, 1: watermark, 2: geolocation */
     gboolean meta_time;           /* inject XLSX clock time as EXIF/IPTC time */
+    gboolean meta_strip_all_source; /* discard all original source metadata */
+    gboolean meta_remove_camera;  /* remove Camera Make/Model/Lens */
+    gboolean meta_remove_serial;  /* remove serial numbers */
+    gboolean meta_remove_software; /* remove software tags */
+    gboolean meta_remove_author;  /* remove artist/author/copyright */
     gboolean meta_remove_image_id; /* remove ImageUniqueID / ImageID metadata */
     gboolean use_native_metadata; /* use in-memory gexiv2 instead of exiftool */
     gboolean batch_exiftool;      /* run exiftool once with an argfile (-@) */
@@ -395,6 +400,11 @@ static void snapshot_export_settings(StampyWindow *window_self, ExportSettingsSn
         g_free(src_str);
     }
     snap->meta_time = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TIME, snap->xlsx_time_exif);
+    snap->meta_strip_all_source = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_STRIP_ALL_SOURCE, FALSE);
+    snap->meta_remove_camera = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_CAMERA, FALSE);
+    snap->meta_remove_serial = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_SERIAL, FALSE);
+    snap->meta_remove_software = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_SOFTWARE, FALSE);
+    snap->meta_remove_author = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_AUTHOR, FALSE);
     snap->meta_remove_image_id = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID, FALSE);
     snap->use_native_metadata = stampy_config_get_bool(STAMPY_CONFIG_KEY_USE_NATIVE_METADATA, FALSE);
     snap->batch_exiftool = stampy_config_get_bool(STAMPY_CONFIG_KEY_BATCH_EXIFTOOL, FALSE);
@@ -1362,6 +1372,9 @@ static void export_image_worker(gpointer data, gpointer user_data) {
 
                 if (meta) {
                     g_clear_error(&gex_err);
+                    if (ctx->snapshot.meta_strip_all_source) {
+                        gexiv2_metadata_clear(meta);
+                    }
                     gexiv2_metadata_try_set_orientation(meta, GEXIV2_ORIENTATION_NORMAL, NULL);
                     stampy_ensure_standard_exif_tags(meta);
 
@@ -1409,10 +1422,46 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                         gexiv2_metadata_try_clear_tag(meta, "Iptc.Application2.Keywords", NULL);
                     }
 
-                    if (ctx->snapshot.meta_remove_image_id) {
-                        gexiv2_metadata_try_clear_tag(meta, "Exif.Photo.ImageUniqueID", NULL);
-                        gexiv2_metadata_try_clear_tag(meta, "Exif.Image.ImageID", NULL);
-                        gexiv2_metadata_try_clear_tag(meta, "Xmp.exif.ImageUniqueID", NULL);
+                    if (!ctx->snapshot.meta_strip_all_source) {
+                        if (ctx->snapshot.meta_remove_image_id) {
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Photo.ImageUniqueID", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Image.ImageID", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.exif.ImageUniqueID", NULL);
+                        }
+                        if (ctx->snapshot.meta_remove_camera) {
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Image.Make", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Image.Model", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.tiff.Make", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.tiff.Model", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Photo.LensMake", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Photo.LensModel", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Photo.LensSpecification", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.aux.Lens", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.aux.LensModel", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.aux.LensInfo", NULL);
+                        }
+                        if (ctx->snapshot.meta_remove_serial) {
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Photo.BodySerialNumber", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Photo.CameraSerialNumber", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Photo.LensSerialNumber", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Image.CameraSerialNumber", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.aux.SerialNumber", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.aux.LensSerialNumber", NULL);
+                        }
+                        if (ctx->snapshot.meta_remove_software) {
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Image.Software", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Image.ProcessingSoftware", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.xmp.CreatorTool", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.tiff.Software", NULL);
+                        }
+                        if (ctx->snapshot.meta_remove_author) {
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Image.Artist", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Exif.Image.Copyright", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.dc.creator", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Xmp.dc.rights", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Iptc.Application2.Byline", NULL);
+                            gexiv2_metadata_try_clear_tag(meta, "Iptc.Application2.Copyright", NULL);
+                        }
                     }
 
                     if (new_dt[0] != '\0') {
@@ -1463,7 +1512,9 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                 /* Option 2: Write commands to batch argfile (-@) */
                 g_mutex_lock(&ctx->argfile_mutex);
                 fprintf(ctx->argfile_fp, "-overwrite_original\n-quiet\n");
-                fprintf(ctx->argfile_fp, "-TagsFromFile\n%s\n-all:all\n-Orientation=\n", src_path);
+                if (!ctx->snapshot.meta_strip_all_source) {
+                    fprintf(ctx->argfile_fp, "-TagsFromFile\n%s\n-all:all\n-Orientation=\n", src_path);
+                }
 
                 if (has_geo) {
                     double abs_lat = fabs(geo_entry.latitude);
@@ -1514,8 +1565,22 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                     fprintf(ctx->argfile_fp, "-XPKeywords=\n-XMP:Subject=\n-Keywords=\n");
                 }
 
-                if (ctx->snapshot.meta_remove_image_id) {
-                    fprintf(ctx->argfile_fp, "-ImageUniqueID=\n-XMP:ImageUniqueID=\n");
+                if (!ctx->snapshot.meta_strip_all_source) {
+                    if (ctx->snapshot.meta_remove_image_id) {
+                        fprintf(ctx->argfile_fp, "-ImageUniqueID=\n-XMP:ImageUniqueID=\n");
+                    }
+                    if (ctx->snapshot.meta_remove_camera) {
+                        fprintf(ctx->argfile_fp, "-Make=\n-Model=\n-LensMake=\n-LensModel=\n-Lens=\n-LensSpec=\n-LensInfo=\n");
+                    }
+                    if (ctx->snapshot.meta_remove_serial) {
+                        fprintf(ctx->argfile_fp, "-SerialNumber=\n-InternalSerialNumber=\n-CameraSerialNumber=\n-LensSerialNumber=\n");
+                    }
+                    if (ctx->snapshot.meta_remove_software) {
+                        fprintf(ctx->argfile_fp, "-Software=\n-ProcessingSoftware=\n-CreatorTool=\n");
+                    }
+                    if (ctx->snapshot.meta_remove_author) {
+                        fprintf(ctx->argfile_fp, "-Artist=\n-Copyright=\n-Creator=\n-By-line=\n-Rights=\n");
+                    }
                 }
 
                 if (new_dt[0] != '\0') {
@@ -1552,7 +1617,9 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                 GString *cmd = g_string_new(exif_cmd);
 
                 g_string_append(cmd, " -overwrite_original -quiet ");
-                g_string_append_printf(cmd, "-TagsFromFile %s \"-all:all\" \"-Orientation=\" ", quoted_source);
+                if (!ctx->snapshot.meta_strip_all_source) {
+                    g_string_append_printf(cmd, "-TagsFromFile %s \"-all:all\" \"-Orientation=\" ", quoted_source);
+                }
 
                 if (has_geo) {
                     double abs_lat = fabs(geo_entry.latitude);
@@ -1602,8 +1669,22 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                     g_string_append(cmd, "-XPKeywords= -XMP:Subject= -Keywords= ");
                 }
 
-                if (ctx->snapshot.meta_remove_image_id) {
-                    g_string_append(cmd, "-ImageUniqueID= -XMP:ImageUniqueID= ");
+                if (!ctx->snapshot.meta_strip_all_source) {
+                    if (ctx->snapshot.meta_remove_image_id) {
+                        g_string_append(cmd, "-ImageUniqueID= -XMP:ImageUniqueID= ");
+                    }
+                    if (ctx->snapshot.meta_remove_camera) {
+                        g_string_append(cmd, "-Make= -Model= -LensMake= -LensModel= -Lens= -LensSpec= -LensInfo= ");
+                    }
+                    if (ctx->snapshot.meta_remove_serial) {
+                        g_string_append(cmd, "-SerialNumber= -InternalSerialNumber= -CameraSerialNumber= -LensSerialNumber= ");
+                    }
+                    if (ctx->snapshot.meta_remove_software) {
+                        g_string_append(cmd, "-Software= -ProcessingSoftware= -CreatorTool= ");
+                    }
+                    if (ctx->snapshot.meta_remove_author) {
+                        g_string_append(cmd, "-Artist= -Copyright= -Creator= -By-line= -Rights= ");
+                    }
                 }
 
                 if (new_dt[0] != '\0') {

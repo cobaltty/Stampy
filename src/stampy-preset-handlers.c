@@ -171,6 +171,11 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
     m_comm = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_COMMENTS, def_meta);
     m_date = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_DATE, def_time);
     m_time = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TIME, def_time);
+    gboolean m_strip_all = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_STRIP_ALL_SOURCE, FALSE);
+    gboolean m_remove_cam = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_CAMERA, FALSE);
+    gboolean m_remove_ser = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_SERIAL, FALSE);
+    gboolean m_remove_soft = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_SOFTWARE, FALSE);
+    gboolean m_remove_auth = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_AUTHOR, FALSE);
     gboolean m_remove_id = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID, FALSE);
     {
         g_autofree char *date_src = stampy_config_get_string(STAMPY_CONFIG_KEY_META_DATE_SOURCE, "auto");
@@ -188,6 +193,11 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
             "  \"metadata_inject\": %s,\n  \"xlsx_time_exif\": %s,\n"
             "  \"meta_title\": %s,\n  \"meta_subject\": %s,\n  \"meta_tags\": %s,\n  \"meta_comments\": %s,\n"
             "  \"meta_date\": %s,\n  \"meta_date_source\": \"%s\",\n  \"meta_time\": %s,\n"
+            "  \"meta_strip_all_source\": %s,\n"
+            "  \"meta_remove_camera\": %s,\n"
+            "  \"meta_remove_serial\": %s,\n"
+            "  \"meta_remove_software\": %s,\n"
+            "  \"meta_remove_author\": %s,\n"
             "  \"meta_remove_image_id\": %s\n}\n",
             (int)gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_size)),
             gtk_spin_button_get_value(GTK_SPIN_BUTTON(self->val_compass_margin_x)),
@@ -219,6 +229,11 @@ void stampy_save_preset_to_file(StampyWindow *self, const char *filepath) {
             m_date ? "true" : "false",
             (date_src && *date_src) ? date_src : "auto",
             m_time ? "true" : "false",
+            m_strip_all ? "true" : "false",
+            m_remove_cam ? "true" : "false",
+            m_remove_ser ? "true" : "false",
+            m_remove_soft ? "true" : "false",
+            m_remove_auth ? "true" : "false",
             m_remove_id ? "true" : "false"
         );
     }
@@ -397,6 +412,31 @@ void stampy_load_preset_from_file(StampyWindow *self, const char *filepath) {
         stampy_config_set_bool(STAMPY_CONFIG_KEY_META_TIME, strstr(content, "\"meta_time\": true") != NULL);
     else
         stampy_config_set_bool(STAMPY_CONFIG_KEY_META_TIME, legacy_time);
+
+    if (strstr(content, "\"meta_strip_all_source\":"))
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_STRIP_ALL_SOURCE, strstr(content, "\"meta_strip_all_source\": true") != NULL);
+    else
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_STRIP_ALL_SOURCE, FALSE);
+
+    if (strstr(content, "\"meta_remove_camera\":"))
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_REMOVE_CAMERA, strstr(content, "\"meta_remove_camera\": true") != NULL);
+    else
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_REMOVE_CAMERA, FALSE);
+
+    if (strstr(content, "\"meta_remove_serial\":"))
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_REMOVE_SERIAL, strstr(content, "\"meta_remove_serial\": true") != NULL);
+    else
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_REMOVE_SERIAL, FALSE);
+
+    if (strstr(content, "\"meta_remove_software\":"))
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_REMOVE_SOFTWARE, strstr(content, "\"meta_remove_software\": true") != NULL);
+    else
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_REMOVE_SOFTWARE, FALSE);
+
+    if (strstr(content, "\"meta_remove_author\":"))
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_REMOVE_AUTHOR, strstr(content, "\"meta_remove_author\": true") != NULL);
+    else
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_META_REMOVE_AUTHOR, FALSE);
 
     if (strstr(content, "\"meta_remove_image_id\":"))
         stampy_config_set_bool(STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID, strstr(content, "\"meta_remove_image_id\": true") != NULL);

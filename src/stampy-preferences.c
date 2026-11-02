@@ -410,7 +410,7 @@ on_date_source_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
     stampy_render_live_preview (self);
 }
 
-static void
+static AdwSwitchRow *
 add_meta_switch_row (AdwPreferencesGroup *group,
                      StampyWindow *self,
                      const char *title,
@@ -426,6 +426,24 @@ add_meta_switch_row (AdwPreferencesGroup *group,
   g_object_set_data (G_OBJECT (row), "config-key", (gpointer) config_key);
   g_signal_connect (row, "notify::active", G_CALLBACK (on_meta_switch_changed), self);
   adw_preferences_group_add (group, GTK_WIDGET (row));
+  return row;
+}
+
+static void
+on_strip_all_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  (void) pspec;
+  gboolean active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
+  GPtrArray *rows = (GPtrArray *) user_data;
+  if (rows != NULL)
+    {
+      guint i;
+      for (i = 0; i < rows->len; i++)
+        {
+          GtkWidget *w = GTK_WIDGET (g_ptr_array_index (rows, i));
+          gtk_widget_set_sensitive (w, !active);
+        }
+    }
 }
 
 void
@@ -688,10 +706,79 @@ stampy_show_preferences (StampyWindow *self)
                        STAMPY_CONFIG_KEY_META_TIME,
                        default_meta_time);
 
-  add_meta_switch_row (exp_group, self, "Remove Image ID",
-                       "Strip Image ID (ImageUniqueID) metadata from exported photos",
-                       STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID,
-                       FALSE);
+  /* Metadata Stripping group card */
+  {
+    AdwPreferencesGroup *strip_group;
+    AdwSwitchRow *strip_all_switch;
+    AdwSwitchRow *r_cam;
+    AdwSwitchRow *r_ser;
+    AdwSwitchRow *r_soft;
+    AdwSwitchRow *r_auth;
+    AdwSwitchRow *r_id;
+    GPtrArray *strip_subrows;
+    gboolean strip_all_active;
+    guint i;
+
+    strip_group = ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
+    adw_preferences_group_set_title (strip_group, "Metadata Stripping");
+    adw_preferences_group_set_description (strip_group,
+        "Select source metadata to strip or discard from exported photos.");
+    adw_preferences_page_add (page, strip_group);
+
+    strip_all_switch = add_meta_switch_row (strip_group, self,
+        "Strip all original metadata",
+        "Discard all source photo EXIF/XMP; preserve only stamped text, date, and GPS",
+        STAMPY_CONFIG_KEY_META_STRIP_ALL_SOURCE,
+        FALSE);
+
+    strip_subrows = g_ptr_array_new ();
+
+    r_cam = add_meta_switch_row (strip_group, self,
+        "Camera and Lens",
+        "Strip camera make, model, lens information, and focal specs",
+        STAMPY_CONFIG_KEY_META_REMOVE_CAMERA,
+        FALSE);
+    g_ptr_array_add (strip_subrows, r_cam);
+
+    r_ser = add_meta_switch_row (strip_group, self,
+        "Serial numbers",
+        "Strip camera body, lens, and internal serial numbers",
+        STAMPY_CONFIG_KEY_META_REMOVE_SERIAL,
+        FALSE);
+    g_ptr_array_add (strip_subrows, r_ser);
+
+    r_soft = add_meta_switch_row (strip_group, self,
+        "Software and Tools",
+        "Strip camera software, firmware, and CreatorTool tags",
+        STAMPY_CONFIG_KEY_META_REMOVE_SOFTWARE,
+        FALSE);
+    g_ptr_array_add (strip_subrows, r_soft);
+
+    r_auth = add_meta_switch_row (strip_group, self,
+        "Author and Copyright",
+        "Strip artist, creator, copyright, and by-line tags",
+        STAMPY_CONFIG_KEY_META_REMOVE_AUTHOR,
+        FALSE);
+    g_ptr_array_add (strip_subrows, r_auth);
+
+    r_id = add_meta_switch_row (strip_group, self,
+        "Image ID",
+        "Strip Image ID (ImageUniqueID, ImageID)",
+        STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID,
+        FALSE);
+    g_ptr_array_add (strip_subrows, r_id);
+
+    strip_all_active = adw_switch_row_get_active (strip_all_switch);
+    for (i = 0; i < strip_subrows->len; i++)
+      {
+        gtk_widget_set_sensitive (GTK_WIDGET (g_ptr_array_index (strip_subrows, i)), !strip_all_active);
+      }
+
+    g_object_set_data_full (G_OBJECT (strip_all_switch), "strip-subrows", strip_subrows,
+                            (GDestroyNotify) g_ptr_array_unref);
+    g_signal_connect (strip_all_switch, "notify::active",
+                      G_CALLBACK (on_strip_all_changed), strip_subrows);
+  }
 
   /* Additional settings */
   extra_group = ADW_PREFERENCES_GROUP (adw_preferences_group_new ());

@@ -215,6 +215,11 @@ void on_xlsx_time_exif_toggled(GObject *object, GParamSpec *pspec, gpointer user
 #define STAMPY_CONFIG_KEY_META_DATE     "meta-date"     /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_META_DATE_SOURCE "meta-date-source" /* string, default "auto" */
 #define STAMPY_CONFIG_KEY_META_TIME     "meta-time"     /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_META_STRIP_ALL_SOURCE "meta-strip-all-source" /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_META_REMOVE_CAMERA   "meta-remove-camera"   /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_META_REMOVE_SERIAL   "meta-remove-serial"   /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_META_REMOVE_SOFTWARE "meta-remove-software" /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_META_REMOVE_AUTHOR   "meta-remove-author"   /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID "meta-remove-image-id" /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_USE_NATIVE_METADATA "use-native-metadata" /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_BATCH_EXIFTOOL "batch-exiftool" /* bool, default FALSE */
