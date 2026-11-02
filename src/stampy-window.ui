@@ -59,13 +59,6 @@
               </object>
             </child>
             <child>
-              <object class="AdwBanner" id="banner_landscape">
-                <property name="title">Warning: Some photos are in horizontal (landscape) position</property>
-                <property name="button-label">See more</property>
-                <property name="revealed">false</property>
-              </object>
-            </child>
-            <child>
               <object class="AdwBanner" id="banner_missing_data">
                 <property name="title">Warning: Expected data missing</property>
                 <property name="button-label">See details</property>

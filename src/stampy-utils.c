@@ -1406,8 +1406,6 @@ typedef struct {
     gboolean missing_coords;
     gboolean missing_degree;
     gboolean missing_text;
-    gboolean missing_index;
-    gboolean missing_date;
 } MissingDataItem;
 
 static void missing_data_item_free(gpointer data) {
@@ -1617,37 +1615,6 @@ static gboolean watermark_has_text(const char *text) {
     return found;
 }
 
-static gboolean watermark_has_index(const char *text) {
-    char **lines;
-    gboolean has = FALSE;
-    int j;
-
-    if (!text || !*text) return FALSE;
-    lines = g_strsplit(text, "\n", -1);
-    if (!lines) return FALSE;
-
-    for (j = 0; lines[j] != NULL; j++) {
-        char *l = g_strstrip(g_strdup(lines[j]));
-        if (g_ascii_strncasecmp(l, "index number:", 13) == 0 ||
-            g_ascii_strncasecmp(l, "index number", 12) == 0 ||
-            g_ascii_strncasecmp(l, "index:", 6) == 0 ||
-            g_ascii_strncasecmp(l, "index no:", 9) == 0 ||
-            g_ascii_strncasecmp(l, "index no.", 9) == 0 ||
-            g_ascii_strncasecmp(l, "index", 5) == 0) {
-            const char *p = l;
-            while (*p && !g_ascii_isdigit(*p)) p++;
-            if (*p) {
-                has = TRUE;
-                g_free(l);
-                break;
-            }
-        }
-        g_free(l);
-    }
-    g_strfreev(lines);
-    return has;
-}
-
 static gboolean watermark_has_date(const char *text) {
     char *out_d = NULL;
     char **lines;
@@ -1685,17 +1652,93 @@ static gboolean watermark_has_date(const char *text) {
     return FALSE;
 }
 
+void stampy_update_warning_banner(StampyWindow *self) {
+    gboolean warn_landscape;
+    guint landscape_count = 0;
+    guint missing_count = 0;
+    guint wm_missing = 0, geo_missing = 0;
+    char *bmsg = NULL;
+    const char *btn_label = "See details";
+    gboolean is_pu_mode;
+    guint i;
+
+    if (!self || !self->banner_missing_data) return;
+
+    warn_landscape = stampy_config_get_bool(STAMPY_CONFIG_KEY_WARN_LANDSCAPE, TRUE);
+    if (warn_landscape && self->horizontal_photos) {
+        landscape_count = self->horizontal_photos->len;
+    }
+
+    if (self->missing_data_items) {
+        missing_count = self->missing_data_items->len;
+        for (i = 0; i < missing_count; i++) {
+            MissingDataItem *it = g_ptr_array_index(self->missing_data_items, i);
+            if (it->missing_text) wm_missing++;
+            if (it->missing_coords || it->missing_gps) geo_missing++;
+        }
+    }
+
+    if (missing_count == 0 && landscape_count == 0) {
+        adw_banner_set_revealed(ADW_BANNER(self->banner_missing_data), FALSE);
+        return;
+    }
+
+    is_pu_mode = stampy_detect_is_pu_mode(self);
+
+    if (missing_count > 0 && landscape_count > 0) {
+        bmsg = g_strdup_printf("Warning: %u photo%s missing data, %u horizontal",
+                               missing_count, missing_count == 1 ? "" : "s",
+                               landscape_count);
+        btn_label = "See details";
+    } else if (missing_count > 0) {
+        if (wm_missing > 0 && geo_missing == 0) {
+            bmsg = (wm_missing == 1)
+                ? g_strdup("Warning: 1 photo missing watermark data in DOCX")
+                : g_strdup_printf("Warning: %u photos missing watermark data in DOCX", wm_missing);
+        } else if (geo_missing > 0 && wm_missing == 0) {
+            bmsg = (geo_missing == 1)
+                ? g_strdup("Warning: 1 photo missing coordinates in XLSX")
+                : g_strdup_printf("Warning: %u photos missing coordinates in XLSX", geo_missing);
+        } else if (is_pu_mode) {
+            bmsg = (missing_count == 1)
+                ? g_strdup("Warning: 1 photo missing required PU data")
+                : g_strdup_printf("Warning: %u photos missing required PU data", missing_count);
+        } else {
+            bmsg = (missing_count == 1)
+                ? g_strdup("Warning: 1 photo missing required data")
+                : g_strdup_printf("Warning: %u photos missing required data", missing_count);
+        }
+        btn_label = "See details";
+    } else {
+        bmsg = g_strdup_printf("Warning: %u photo%s in horizontal (landscape) position",
+                               landscape_count,
+                               landscape_count == 1 ? " is" : "s are");
+        btn_label = "See more";
+    }
+
+    adw_banner_set_button_label(ADW_BANNER(self->banner_missing_data), btn_label);
+    adw_banner_set_title(ADW_BANNER(self->banner_missing_data), bmsg);
+    adw_banner_set_revealed(ADW_BANNER(self->banner_missing_data), TRUE);
+
+    {
+        char log_msg[256];
+        snprintf(log_msg, sizeof(log_msg), "[WARN] %s", bmsg);
+        stampy_append_log(self, log_msg);
+    }
+
+    g_free(bmsg);
+}
+
 void stampy_check_missing_data(StampyWindow *self) {
     guint total, i;
-    gboolean is_pu_mode = FALSE;
     gboolean has_geo_expected;
     gboolean has_wm_expected;
 
     if (!self || !self->banner_missing_data) return;
 
     if (!self->image_files || self->image_files->len == 0) {
-        adw_banner_set_revealed(ADW_BANNER(self->banner_missing_data), FALSE);
         if (self->missing_data_items) g_ptr_array_set_size(self->missing_data_items, 0);
+        stampy_update_warning_banner(self);
         return;
     }
 
@@ -1703,12 +1746,11 @@ void stampy_check_missing_data(StampyWindow *self) {
     has_wm_expected = (self->file_watermark != NULL);
 
     if (!has_geo_expected && !has_wm_expected) {
-        adw_banner_set_revealed(ADW_BANNER(self->banner_missing_data), FALSE);
         if (self->missing_data_items) g_ptr_array_set_size(self->missing_data_items, 0);
+        stampy_update_warning_banner(self);
         return;
     }
 
-    is_pu_mode = stampy_detect_is_pu_mode(self);
     total = self->image_files->len;
 
     if (self->missing_data_items) {
@@ -1728,13 +1770,10 @@ void stampy_check_missing_data(StampyWindow *self) {
         gboolean m_coords = FALSE;
         gboolean m_degree = FALSE;
         gboolean m_text = FALSE;
-        gboolean m_index = FALSE;
-        gboolean m_date = FALSE;
         char *custom_text = NULL;
         char *azimuth_str = NULL;
         GeolocationEntry geo_entry;
         gboolean has_geo = FALSE;
-        gboolean file_is_pu;
 
         if (!path) continue;
         name = strrchr(path, '/');
@@ -1742,7 +1781,6 @@ void stampy_check_missing_data(StampyWindow *self) {
         pu_code = stampy_get_pu_code_for_file(file);
         pid = stampy_extract_id_from_filename(name);
         m_id = (pid <= 0);
-        file_is_pu = is_pu_mode || stampy_is_file_in_pu_mode(self, file);
 
         if (has_geo_expected) {
             has_geo = (pid > 0 && stampy_lookup_geolocation_data(self, pu_code, pid, &geo_entry));
@@ -1761,22 +1799,15 @@ void stampy_check_missing_data(StampyWindow *self) {
             gboolean has_degree = (custom_text && watermark_has_degree(custom_text, azimuth_str)) ||
                 (has_geo && geo_entry.azimuth_raw > 0.0);
             gboolean has_text = (custom_text && watermark_has_text(custom_text));
-            gboolean has_index = (custom_text && watermark_has_index(custom_text));
-            gboolean has_date = (custom_text && watermark_has_date(custom_text)) ||
-                (has_geo && (geo_entry.date_str[0] != '\0' || geo_entry.time_val > 0.0));
 
             m_coords = !has_coords;
             m_degree = !has_degree;
             m_text = !has_text;
-            if (file_is_pu) {
-                m_index = !has_index;
-                m_date = !has_date;
-            }
         }
 
         g_free(custom_text);
         g_free(azimuth_str);
-        if (m_gps || m_id || m_coords || m_degree || m_text || m_index || m_date) {
+        if (m_gps || m_id || m_coords || m_degree || m_text) {
             MissingDataItem *item = g_new0(MissingDataItem, 1);
             if (pu_code && *pu_code) {
                 item->filename = g_strdup_printf("%s / %s", pu_code, name);
@@ -1789,147 +1820,159 @@ void stampy_check_missing_data(StampyWindow *self) {
             item->missing_coords = m_coords;
             item->missing_degree = m_degree;
             item->missing_text = m_text;
-            item->missing_index = m_index;
-            item->missing_date = m_date;
             g_ptr_array_add(self->missing_data_items, item);
         }
         g_free(pu_code);
     }
 
-    if (self->missing_data_items->len > 0) {
-        guint count = self->missing_data_items->len;
-        guint wm_missing = 0, geo_missing = 0;
-        char *bmsg;
-
-        for (i = 0; i < count; i++) {
-            MissingDataItem *it = g_ptr_array_index(self->missing_data_items, i);
-            if (it->missing_text) wm_missing++;
-            if (it->missing_coords || it->missing_gps) geo_missing++;
-        }
-
-        if (wm_missing > 0 && geo_missing == 0) {
-            bmsg = (count == 1)
-                ? g_strdup("Warning: 1 photo missing watermark data in DOCX")
-                : g_strdup_printf("Warning: %u photos missing watermark data in DOCX", count);
-        } else if (geo_missing > 0 && wm_missing == 0) {
-            bmsg = (count == 1)
-                ? g_strdup("Warning: 1 photo missing coordinates in XLSX")
-                : g_strdup_printf("Warning: %u photos missing coordinates in XLSX", count);
-        } else if (is_pu_mode) {
-            bmsg = (count == 1)
-                ? g_strdup("Warning: 1 photo missing required PU data")
-                : g_strdup_printf("Warning: %u photos missing required PU data", count);
-        } else {
-            bmsg = (count == 1)
-                ? g_strdup("Warning: 1 photo missing required data")
-                : g_strdup_printf("Warning: %u photos missing required data", count);
-        }
-
-        adw_banner_set_title(ADW_BANNER(self->banner_missing_data), bmsg);
-        adw_banner_set_revealed(ADW_BANNER(self->banner_missing_data), TRUE);
-
-        {
-            char log_msg[256];
-            snprintf(log_msg, sizeof(log_msg), "[WARN] %s", bmsg);
-            stampy_append_log(self, log_msg);
-        }
-
-        g_free(bmsg);
-    } else {
-        adw_banner_set_revealed(ADW_BANNER(self->banner_missing_data), FALSE);
-    }
+    stampy_update_warning_banner(self);
 }
 
 void stampy_on_missing_data_banner_clicked(AdwBanner *banner, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
+    gboolean warn_landscape;
+    guint landscape_count = 0;
+    guint missing_count = 0;
     AdwDialog *dialog;
     AdwToolbarView *toolbar;
     AdwHeaderBar *header;
     GtkWidget *title_widget;
     GtkWidget *content;
-    GtkWidget *heading;
     GtkWidget *scrolled;
-    GtkWidget *list;
-    char *text;
+    const char *dlg_title;
     guint i;
 
     (void)banner;
-    if (!self || !self->missing_data_items || self->missing_data_items->len == 0) return;
+    if (!self) return;
+
+    warn_landscape = stampy_config_get_bool(STAMPY_CONFIG_KEY_WARN_LANDSCAPE, TRUE);
+    if (warn_landscape && self->horizontal_photos) {
+        landscape_count = self->horizontal_photos->len;
+    }
+    if (self->missing_data_items) {
+        missing_count = self->missing_data_items->len;
+    }
+
+    if (missing_count == 0 && landscape_count == 0) return;
+
+    if (missing_count == 0 && landscape_count > 0) {
+        stampy_on_landscape_banner_clicked(banner, user_data);
+        return;
+    }
+
+    dlg_title = (landscape_count > 0) ? "Warnings Summary" : "Expected Data Summary";
 
     dialog = adw_dialog_new();
-    adw_dialog_set_title(dialog, "Expected Data Summary");
+    adw_dialog_set_title(dialog, dlg_title);
     adw_dialog_set_content_width(dialog, 520);
-    adw_dialog_set_content_height(dialog, 540);
+    adw_dialog_set_content_height(dialog, 560);
 
     toolbar = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
     header = ADW_HEADER_BAR(adw_header_bar_new());
 
-    title_widget = gtk_label_new("Expected Data Summary");
+    title_widget = gtk_label_new(dlg_title);
     gtk_widget_add_css_class(title_widget, "title");
     adw_header_bar_set_title_widget(header, title_widget);
     adw_toolbar_view_add_top_bar(toolbar, GTK_WIDGET(header));
 
-    content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     gtk_widget_set_margin_top(content, 12);
     gtk_widget_set_margin_bottom(content, 12);
     gtk_widget_set_margin_start(content, 12);
     gtk_widget_set_margin_end(content, 12);
 
-    text = g_strdup_printf("%u photo%s with incomplete data (%u total loaded):",
-                           self->missing_data_items->len,
-                           self->missing_data_items->len == 1 ? "" : "s",
-                           self->image_files ? self->image_files->len : 0);
-    heading = gtk_label_new(text);
-    gtk_label_set_xalign(GTK_LABEL(heading), 0.0);
-    gtk_label_set_wrap(GTK_LABEL(heading), TRUE);
-    gtk_widget_add_css_class(heading, "dim-label");
-    gtk_box_append(GTK_BOX(content), heading);
-    g_free(text);
+    /* Section 1: Incomplete Data */
+    {
+        char *text = g_strdup_printf("%u photo%s with incomplete data (%u total loaded):",
+                               missing_count,
+                               missing_count == 1 ? "" : "s",
+                               self->image_files ? self->image_files->len : 0);
+        GtkWidget *heading = gtk_label_new(text);
+        GtkWidget *list;
+        gtk_label_set_xalign(GTK_LABEL(heading), 0.0);
+        gtk_label_set_wrap(GTK_LABEL(heading), TRUE);
+        gtk_widget_add_css_class(heading, "dim-label");
+        gtk_box_append(GTK_BOX(content), heading);
+        g_free(text);
 
-    list = gtk_list_box_new();
-    gtk_list_box_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_NONE);
-    gtk_widget_add_css_class(list, "boxed-list");
+        list = gtk_list_box_new();
+        gtk_list_box_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_NONE);
+        gtk_widget_add_css_class(list, "boxed-list");
 
-    for (i = 0; i < self->missing_data_items->len; i++) {
-        MissingDataItem *item = g_ptr_array_index(self->missing_data_items, i);
-        AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
-        GtkWidget *badge = NULL;
+        for (i = 0; i < missing_count; i++) {
+            MissingDataItem *item = g_ptr_array_index(self->missing_data_items, i);
+            AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
+            GtkWidget *badge = NULL;
+            GString *sub = g_string_new("");
 
-        GString *sub = g_string_new("");
+            adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), item->filename);
 
-        adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), item->filename);
+            if (item->missing_text) g_string_append(sub, "Watermark (DOCX)");
+            if (item->missing_coords || item->missing_gps) {
+                if (sub->len > 0) g_string_append(sub, ", ");
+                g_string_append(sub, "Coordinates (XLSX)");
+            }
+            if (item->missing_id) {
+                if (sub->len > 0) g_string_append(sub, ", ");
+                g_string_append(sub, "Photo ID");
+            }
+            if (sub->len > 0) {
+                adw_action_row_set_subtitle(row, sub->str);
+            }
+            g_string_free(sub, TRUE);
 
-        if (item->missing_text) g_string_append(sub, "Watermark (DOCX)");
-        if (item->missing_coords || item->missing_gps) {
-            if (sub->len > 0) g_string_append(sub, ", ");
-            g_string_append(sub, "Coordinates (XLSX)");
+            badge = gtk_label_new("Missing");
+            gtk_widget_set_valign(badge, GTK_ALIGN_CENTER);
+            gtk_widget_add_css_class(badge, "missing-badge");
+            gtk_widget_add_css_class(badge, "missing-badge-error");
+            adw_action_row_add_suffix(row, badge);
+
+            gtk_list_box_append(GTK_LIST_BOX(list), GTK_WIDGET(row));
         }
-        if (item->missing_id) {
-            if (sub->len > 0) g_string_append(sub, ", ");
-            g_string_append(sub, "Photo ID");
-        }
-        if (sub->len > 0) {
-            adw_action_row_set_subtitle(row, sub->str);
-        }
-        g_string_free(sub, TRUE);
+        gtk_box_append(GTK_BOX(content), list);
+    }
 
-        badge = gtk_label_new("Missing");
-        gtk_widget_set_valign(badge, GTK_ALIGN_CENTER);
-        gtk_widget_add_css_class(badge, "missing-badge");
-        gtk_widget_add_css_class(badge, "missing-badge-error");
-        adw_action_row_add_suffix(row, badge);
+    /* Section 2: Horizontal Photos (if any) */
+    if (landscape_count > 0) {
+        char *text = g_strdup_printf("%u photo%s in horizontal (landscape) position (rotation recommended):",
+                               landscape_count,
+                               landscape_count == 1 ? " is" : "s are");
+        GtkWidget *heading = gtk_label_new(text);
+        GtkWidget *list;
+        gtk_label_set_xalign(GTK_LABEL(heading), 0.0);
+        gtk_label_set_wrap(GTK_LABEL(heading), TRUE);
+        gtk_widget_add_css_class(heading, "dim-label");
+        gtk_box_append(GTK_BOX(content), heading);
+        g_free(text);
 
-        gtk_list_box_append(GTK_LIST_BOX(list), GTK_WIDGET(row));
+        list = gtk_list_box_new();
+        gtk_list_box_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_NONE);
+        gtk_widget_add_css_class(list, "boxed-list");
+
+        for (i = 0; i < landscape_count; i++) {
+            const char *name = g_ptr_array_index(self->horizontal_photos, i);
+            AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
+            GtkWidget *badge = gtk_label_new("Rotate");
+
+            adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), name);
+            adw_action_row_set_subtitle(row, "Orientation: Horizontal (Landscape)");
+
+            gtk_widget_set_valign(badge, GTK_ALIGN_CENTER);
+            gtk_widget_add_css_class(badge, "missing-badge");
+            adw_action_row_add_suffix(row, badge);
+
+            gtk_list_box_append(GTK_LIST_BOX(list), GTK_WIDGET(row));
+        }
+        gtk_box_append(GTK_BOX(content), list);
     }
 
     scrolled = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), list);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), content);
     gtk_widget_set_vexpand(scrolled, TRUE);
-    gtk_box_append(GTK_BOX(content), scrolled);
 
-    adw_toolbar_view_set_content(toolbar, content);
+    adw_toolbar_view_set_content(toolbar, scrolled);
     adw_dialog_set_child(dialog, GTK_WIDGET(toolbar));
     adw_dialog_present(dialog, GTK_WIDGET(self));
 }
@@ -2202,7 +2245,6 @@ static void landscape_scan_done(GObject *source, GAsyncResult *res, gpointer use
     guint generation = GPOINTER_TO_UINT(user_data);
     GPtrArray *names;
     GError *error = NULL;
-    char *title;
 
     names = g_task_propagate_pointer(G_TASK(res), &error);
     if (error) {
@@ -2219,16 +2261,7 @@ static void landscape_scan_done(GObject *source, GAsyncResult *res, gpointer use
     if (self->horizontal_photos) g_ptr_array_unref(self->horizontal_photos);
     self->horizontal_photos = names;
 
-    if (self->horizontal_photos->len > 0) {
-        title = g_strdup_printf("Warning: %u photo%s in horizontal (landscape) position",
-                                self->horizontal_photos->len,
-                                self->horizontal_photos->len == 1 ? " is" : "s are");
-        adw_banner_set_title(ADW_BANNER(self->banner_landscape), title);
-        g_free(title);
-        adw_banner_set_revealed(ADW_BANNER(self->banner_landscape), TRUE);
-    } else {
-        adw_banner_set_revealed(ADW_BANNER(self->banner_landscape), FALSE);
-    }
+    stampy_update_warning_banner(self);
 }
 
 /* Starts (or restarts) the background landscape scan. */
@@ -2239,7 +2272,7 @@ void stampy_check_horizontal_photos(StampyWindow *self) {
     GPtrArray *files;
     guint i;
 
-    if (!self || !self->banner_landscape) return;
+    if (!self || !self->banner_missing_data) return;
 
     if (self->landscape_cancel) {
         g_cancellable_cancel(self->landscape_cancel);
@@ -2252,7 +2285,7 @@ void stampy_check_horizontal_photos(StampyWindow *self) {
     } else {
         g_ptr_array_set_size(self->horizontal_photos, 0);
     }
-    adw_banner_set_revealed(ADW_BANNER(self->banner_landscape), FALSE);
+    stampy_update_warning_banner(self);
 
     if (!stampy_config_get_bool(STAMPY_CONFIG_KEY_WARN_LANDSCAPE, TRUE) ||
         !self->image_files || self->image_files->len == 0) {

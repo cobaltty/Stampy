@@ -105,7 +105,6 @@ struct _StampyWindow {
     guint save_state_timeout_id;
 
     /* QoL features */
-    GtkWidget *banner_landscape;
     GPtrArray *horizontal_photos;
     GCancellable *landscape_cancel;
     guint landscape_generation;
@@ -164,6 +163,7 @@ void stampy_append_log(StampyWindow *self, const char *message);
 void stampy_update_status_line(StampyWindow *self, const char *message);
 void stampy_check_horizontal_photos(StampyWindow *self);
 void stampy_check_missing_data(StampyWindow *self);
+void stampy_update_warning_banner(StampyWindow *self);
 void stampy_on_missing_data_banner_clicked(AdwBanner *banner, gpointer user_data);
 void stampy_on_critical_coords_banner_clicked(AdwBanner *banner, gpointer user_data);
 void stampy_on_critical_docx_banner_clicked(AdwBanner *banner, gpointer user_data);

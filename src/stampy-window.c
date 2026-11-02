@@ -246,7 +246,6 @@ static void stampy_window_class_init(StampyWindowClass *klass) {
 
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, toast_overlay);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, progress_bar);
-    gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_landscape);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_missing_data);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_critical_coords);
     gtk_widget_class_bind_template_child(widget_class, StampyWindow, banner_critical_docx);
@@ -424,12 +423,9 @@ static void update_banner_theme(StampyWindow *self) {
     AdwStyleManager *manager = adw_style_manager_get_default();
     gboolean dark;
 
-    if (!self || !self->banner_landscape || !manager) return;
+    if (!self || !self->banner_missing_data || !manager) return;
 
     dark = adw_style_manager_get_dark(manager);
-    if (self->banner_landscape)
-        gtk_widget_set_name(self->banner_landscape,
-                            dark ? "stampy_banner_dark" : "stampy_banner_light");
     if (self->banner_missing_data)
         gtk_widget_set_name(self->banner_missing_data,
                             dark ? "stampy_banner_dark" : "stampy_banner_light");

@@ -1624,11 +1624,6 @@ void stampy_setup_file_handlers_and_dnd(StampyWindow *self) {
 
     if (!self) return;
 
-    if (self->banner_landscape) {
-        g_signal_connect(self->banner_landscape, "button-clicked",
-                         G_CALLBACK(stampy_on_landscape_banner_clicked), self);
-    }
-
     if (self->banner_missing_data) {
         g_signal_connect(self->banner_missing_data, "button-clicked",
                          G_CALLBACK(stampy_on_missing_data_banner_clicked), self);
