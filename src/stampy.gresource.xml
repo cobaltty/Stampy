@@ -2,6 +2,7 @@
 <gresources>
   <gresource prefix="/com/cobaltty/stampy">
     <file preprocess="xml-stripblanks">stampy-window.ui</file>
+    <file preprocess="xml-stripblanks">stampy-quick-window.ui</file>
     <file preprocess="xml-stripblanks">shortcuts-dialog.ui</file>
     <file>prof-teto.png</file>
     <file>teto.mp3</file>

@@ -9,6 +9,8 @@
 #include <string.h>
 #include <math.h>
 
+static GRecMutex s_gexiv2_mutex;
+
 typedef struct {
     gboolean has_compass;
     int comp_w;
@@ -57,14 +59,21 @@ typedef struct {
     gboolean meta_remove_software; /* remove software tags */
     gboolean meta_remove_author;  /* remove artist/author/copyright */
     gboolean meta_remove_image_id; /* remove ImageUniqueID / ImageID metadata */
+    char *meta_strip_text;        /* words to strip from metadata Title & Subject */
+    gboolean export_timephoto_rename; /* rename exported photos to TimePhoto_YYYYMMDD_HHMMSS */
+    gboolean post_script_enable;  /* run custom script after export completes */
+    char *post_script_path;       /* path to post-export script */
+    char *post_script_args;       /* arguments for post-export script */
     gboolean use_native_metadata; /* use in-memory gexiv2 instead of exiftool */
     gboolean batch_exiftool;      /* run exiftool once with an argfile (-@) */
     GFile *file_compass;
 } ExportSettingsSnapshot;
 
 typedef struct {
+    GtkApplication *app;
     StampyWindow *self;
     GFile *export_folder;
+    GPtrArray *image_files;
     ExportSettingsSnapshot snapshot;
     guint inhibit_cookie;
 } ExportThreadData;
@@ -81,6 +90,7 @@ typedef struct {
 /* Shared export context. Read-only during export, safe across threads. */
 typedef struct {
     StampyWindow *self;
+    GPtrArray *image_files;
     char *folder_path;
     ExportSettingsSnapshot snapshot;
     guint total;
@@ -382,32 +392,66 @@ static void snapshot_export_settings(StampyWindow *window_self, ExportSettingsSn
 #pragma GCC diagnostic pop
     }
 
-    snap->title_experimental = stampy_config_get_bool(STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, FALSE);
-    snap->xlsx_time_exif = stampy_config_get_bool(STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE);
-    snap->meta_title = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TITLE, snap->title_experimental);
-    snap->meta_subject = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_SUBJECT, snap->title_experimental);
-    snap->meta_tags = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TAGS, snap->title_experimental);
-    snap->meta_comments = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_COMMENTS, snap->title_experimental);
-    snap->meta_date = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_DATE, snap->xlsx_time_exif);
-    {
-        char *src_str = stampy_config_get_string(STAMPY_CONFIG_KEY_META_DATE_SOURCE, "auto");
+    if (window_self->has_quick_meta) {
+        const StampyQuickMeta *qm = &window_self->quick_meta;
+        const char *src_str = qm->meta_date_source;
+
+        snap->title_experimental = qm->title_experimental;
+        snap->xlsx_time_exif = qm->xlsx_time_exif;
+        snap->meta_title = qm->meta_title;
+        snap->meta_subject = qm->meta_subject;
+        snap->meta_tags = qm->meta_tags;
+        snap->meta_comments = qm->meta_comments;
+        snap->meta_date = qm->meta_date;
         if (g_ascii_strcasecmp(src_str, "geolocation") == 0)
             snap->meta_date_source = 1;
         else if (g_ascii_strcasecmp(src_str, "watermark") == 0)
             snap->meta_date_source = 2;
         else
             snap->meta_date_source = 0;
-        g_free(src_str);
+        snap->meta_time = qm->meta_time;
+        snap->meta_strip_all_source = qm->meta_strip_all_source;
+        snap->meta_remove_camera = qm->meta_remove_camera;
+        snap->meta_remove_serial = qm->meta_remove_serial;
+        snap->meta_remove_software = qm->meta_remove_software;
+        snap->meta_remove_author = qm->meta_remove_author;
+        snap->meta_remove_image_id = qm->meta_remove_image_id;
+        snap->meta_strip_text = g_strdup(qm->meta_strip_text ? qm->meta_strip_text : "");
+        snap->export_timephoto_rename = qm->export_timephoto_rename;
+    } else {
+        snap->title_experimental = stampy_config_get_bool(STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, FALSE);
+        snap->xlsx_time_exif = stampy_config_get_bool(STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE);
+        snap->meta_title = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TITLE, snap->title_experimental);
+        snap->meta_subject = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_SUBJECT, snap->title_experimental);
+        snap->meta_tags = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TAGS, snap->title_experimental);
+        snap->meta_comments = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_COMMENTS, snap->title_experimental);
+        snap->meta_date = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_DATE, snap->xlsx_time_exif);
+        {
+            char *src_str = stampy_config_get_string(STAMPY_CONFIG_KEY_META_DATE_SOURCE, "auto");
+            if (g_ascii_strcasecmp(src_str, "geolocation") == 0)
+                snap->meta_date_source = 1;
+            else if (g_ascii_strcasecmp(src_str, "watermark") == 0)
+                snap->meta_date_source = 2;
+            else
+                snap->meta_date_source = 0;
+            g_free(src_str);
+        }
+        snap->meta_time = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TIME, snap->xlsx_time_exif);
+        snap->meta_strip_all_source = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_STRIP_ALL_SOURCE, FALSE);
+        snap->meta_remove_camera = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_CAMERA, FALSE);
+        snap->meta_remove_serial = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_SERIAL, FALSE);
+        snap->meta_remove_software = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_SOFTWARE, FALSE);
+        snap->meta_remove_author = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_AUTHOR, FALSE);
+        snap->meta_remove_image_id = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID, FALSE);
+        snap->meta_strip_text = stampy_config_get_string(STAMPY_CONFIG_KEY_META_STRIP_TEXT, "");
+        snap->export_timephoto_rename = stampy_config_get_bool(STAMPY_CONFIG_KEY_TIMEPHOTO_RENAME, FALSE);
     }
-    snap->meta_time = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_TIME, snap->xlsx_time_exif);
-    snap->meta_strip_all_source = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_STRIP_ALL_SOURCE, FALSE);
-    snap->meta_remove_camera = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_CAMERA, FALSE);
-    snap->meta_remove_serial = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_SERIAL, FALSE);
-    snap->meta_remove_software = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_SOFTWARE, FALSE);
-    snap->meta_remove_author = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_AUTHOR, FALSE);
-    snap->meta_remove_image_id = stampy_config_get_bool(STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID, FALSE);
-    snap->use_native_metadata = stampy_config_get_bool(STAMPY_CONFIG_KEY_USE_NATIVE_METADATA, FALSE);
-    snap->batch_exiftool = stampy_config_get_bool(STAMPY_CONFIG_KEY_BATCH_EXIFTOOL, FALSE);
+    snap->post_script_enable = stampy_config_get_bool(STAMPY_CONFIG_KEY_POST_SCRIPT_ENABLE, FALSE);
+    snap->post_script_path = stampy_config_get_string(STAMPY_CONFIG_KEY_POST_SCRIPT_PATH, "");
+    snap->post_script_args = stampy_config_get_string(STAMPY_CONFIG_KEY_POST_SCRIPT_ARGS, "");
+    /* Force native metadata engine (GExiv2) TRUE: required by build, thread-safe, 0 subprocesses */
+    snap->use_native_metadata = TRUE;
+    snap->batch_exiftool = stampy_config_get_bool(STAMPY_CONFIG_KEY_BATCH_EXIFTOOL, TRUE);
 
     if (window_self->val_text_size) {
         GListModel *model;
@@ -465,6 +509,9 @@ static void free_export_snapshot(ExportSettingsSnapshot *snap) {
     if (!snap) return;
     if (snap->file_compass) g_object_unref(snap->file_compass);
     if (snap->font_family) g_free(snap->font_family);
+    if (snap->meta_strip_text) g_free(snap->meta_strip_text);
+    if (snap->post_script_path) g_free(snap->post_script_path);
+    if (snap->post_script_args) g_free(snap->post_script_args);
 }
 
 static GdkPixbuf *render_stamped_on_pixbuf(GdkPixbuf *pixbuf, const ExportSettingsSnapshot *snap, const char *in_custom_text, const char *in_azimuth_str, CompassIndex *cidx) {
@@ -728,7 +775,7 @@ void stampy_render_live_preview(StampyWindow *window_self) {
     GList *selected_rows;
     ExportSettingsSnapshot snap;
 
-    if (!window_self || !window_self->file_listbox || !window_self->image_files) return;
+    if (!window_self || window_self->quick_mode || !window_self->file_listbox || !window_self->image_files) return;
 
     selected_rows = gtk_list_box_get_selected_rows(GTK_LIST_BOX(window_self->file_listbox));
     if (g_list_length(selected_rows) == 1) {
@@ -819,14 +866,13 @@ static gboolean update_ui_progress_idle(gpointer user_data) {
     UIProgressUpdateData *data = (UIProgressUpdateData *)user_data;
     if (!data) return G_SOURCE_REMOVE;
 
-    if (data->self) {
+    if (data->self && !data->self->disposed) {
         stampy_set_progress(data->self, data->fraction, data->visible);
 
         if (data->visible && data->fraction > 0.0 && !data->is_finished) {
-            char *title = g_strdup_printf("Exporting… %d%%",
-                                          (int)(data->fraction * 100.0 + 0.5));
+            g_autofree char *title = g_strdup_printf("Exporting… %d%%",
+                                                     (int)(data->fraction * 100.0 + 0.5));
             gtk_window_set_title(GTK_WINDOW(data->self), title);
-            g_free(title);
         }
 
         if (data->message) {
@@ -848,8 +894,18 @@ static gboolean update_ui_progress_idle(gpointer user_data) {
             if (data->self->box_right_panel) gtk_widget_set_sensitive(data->self->box_right_panel, TRUE);
             if (data->self->file_listbox) gtk_widget_set_sensitive(data->self->file_listbox, TRUE);
         }
+
+        if (data->self->quick_progress_cb) {
+            data->self->quick_progress_cb(data->self,
+                                          data->fraction,
+                                          data->visible,
+                                          data->message,
+                                          data->is_finished,
+                                          data->self->quick_cb_data);
+        }
     }
 
+    g_clear_object(&data->self);
     g_free(data->message);
     g_free(data);
     return G_SOURCE_REMOVE;
@@ -857,7 +913,7 @@ static gboolean update_ui_progress_idle(gpointer user_data) {
 
 static void send_progress_to_ui(StampyWindow *window_self, double fraction, gboolean visible, const char *log_msg, gboolean is_toast, gboolean is_finished) {
     UIProgressUpdateData *data = g_new0(UIProgressUpdateData, 1);
-    data->self = window_self;
+    data->self = window_self ? g_object_ref(window_self) : NULL;
     data->fraction = fraction;
     data->visible = visible;
     data->message = log_msg ? g_strdup(log_msg) : NULL;
@@ -905,10 +961,14 @@ static void set_gexiv2_xp_tag(GExiv2Metadata *meta, const char *tag, const char 
 }
 
 static GExiv2Metadata *stampy_gexiv2_open_source(const char *src_path, GError **error) {
-    GExiv2Metadata *meta = gexiv2_metadata_new();
+    GExiv2Metadata *meta;
     GError *open_err = NULL;
 
+    g_rec_mutex_lock(&s_gexiv2_mutex);
+    meta = gexiv2_metadata_new();
+
     if (gexiv2_metadata_open_path(meta, src_path, &open_err)) {
+        g_rec_mutex_unlock(&s_gexiv2_mutex);
         return meta;
     }
 
@@ -941,6 +1001,7 @@ static GExiv2Metadata *stampy_gexiv2_open_source(const char *src_path, GError **
                                 g_clear_error(&open_err);
                                 g_free(contents);
                                 g_object_unref(meta);
+                                g_rec_mutex_unlock(&s_gexiv2_mutex);
                                 return app1_meta;
                             }
                             g_clear_error(&app1_err);
@@ -960,6 +1021,7 @@ static GExiv2Metadata *stampy_gexiv2_open_source(const char *src_path, GError **
         g_clear_error(&open_err);
     }
     g_object_unref(meta);
+    g_rec_mutex_unlock(&s_gexiv2_mutex);
     return NULL;
 }
 
@@ -1094,6 +1156,56 @@ static char *get_exiftool_cmd(void) {
     return g_strdup("exiftool");
 }
 
+/* Strips comma-separated words/phrases case-insensitively and collapses extra spaces. */
+static char *strip_words_from_text(const char *src, const char *words_to_strip) {
+    if (!src || !*src) return g_strdup("");
+    if (!words_to_strip || !*words_to_strip) return g_strdup(src);
+
+    char *result = g_strdup(src);
+    char **tokens = g_strsplit(words_to_strip, ",", -1);
+    if (!tokens) return result;
+
+    for (int t = 0; tokens[t] != NULL; t++) {
+        char *target = g_strstrip(tokens[t]);
+        gsize tlen = strlen(target);
+        if (tlen == 0) continue;
+
+        GString *accum = g_string_new("");
+        const char *p = result;
+        while (*p != '\0') {
+            if (g_ascii_strncasecmp(p, target, tlen) == 0) {
+                p += tlen;
+            } else {
+                g_string_append_c(accum, *p);
+                p++;
+            }
+        }
+        g_free(result);
+        result = g_string_free(accum, FALSE);
+    }
+    g_strfreev(tokens);
+
+    /* Collapse multiple whitespace and trim */
+    GString *clean = g_string_new("");
+    gboolean in_space = FALSE;
+    const char *p = result;
+    while (*p != '\0') {
+        if (g_ascii_isspace(*p)) {
+            if (!in_space) {
+                g_string_append_c(clean, ' ');
+                in_space = TRUE;
+            }
+        } else {
+            g_string_append_c(clean, *p);
+            in_space = FALSE;
+        }
+        p++;
+    }
+    g_free(result);
+    result = g_string_free(clean, FALSE);
+    return g_strstrip(result);
+}
+
 /* Exports one image on a thread-pool worker. */
 static void export_image_worker(gpointer data, gpointer user_data) {
     ExportWorkItem *item = (ExportWorkItem *)data;
@@ -1121,7 +1233,7 @@ static void export_image_worker(gpointer data, gpointer user_data) {
         return;
     }
 
-    file = g_ptr_array_index(window_self->image_files, i);
+    file = ctx->image_files ? g_ptr_array_index(ctx->image_files, i) : NULL;
     if (!file) { g_free(item); return; }
 
     orig_basename = g_file_get_basename(file);
@@ -1208,6 +1320,9 @@ static void export_image_worker(gpointer data, gpointer user_data) {
             GExiv2Metadata *native_meta = NULL;
             GError *native_gex_err = NULL;
 
+            g_printerr("[STAMPY] Item %u/%u (%s) -> pixbuf saved, writing metadata (native=%d)...\n",
+                       i + 1, total, orig_basename, ctx->snapshot.use_native_metadata);
+
             g_atomic_int_add(&ctx->success_count, 1);
 
             if (ctx->snapshot.use_native_metadata) {
@@ -1218,6 +1333,11 @@ static void export_image_worker(gpointer data, gpointer user_data) {
             if ((ctx->snapshot.meta_title || ctx->snapshot.meta_subject || ctx->snapshot.meta_tags || ctx->snapshot.meta_comments) &&
                 custom_text && *custom_text != '\0') {
                 stampy_extract_project_description(custom_text, &desc_text);
+                if (desc_text && ctx->snapshot.meta_strip_text && *ctx->snapshot.meta_strip_text != '\0') {
+                    char *stripped = strip_words_from_text(desc_text, ctx->snapshot.meta_strip_text);
+                    g_free(desc_text);
+                    desc_text = stripped;
+                }
             }
 
             /* Extract date and time if enabled */
@@ -1231,10 +1351,19 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                 const char *chosen_time = NULL;
 
                 if (src_path && *src_path) {
-                    if (native_meta) {
-                        gchar *existing_dt = gexiv2_metadata_try_get_tag_string(native_meta, "Exif.Photo.DateTimeOriginal", NULL);
+                    GExiv2Metadata *read_meta = native_meta;
+                    gboolean temp_meta = FALSE;
+                    if (!read_meta) {
+                        read_meta = stampy_gexiv2_open_source(src_path, NULL);
+                        temp_meta = (read_meta != NULL);
+                    }
+                    if (read_meta) {
+                        gchar *existing_dt;
+                        g_rec_mutex_lock(&s_gexiv2_mutex);
+                        existing_dt = gexiv2_metadata_try_get_tag_string(read_meta, "Exif.Photo.DateTimeOriginal", NULL);
                         if (!existing_dt)
-                            existing_dt = gexiv2_metadata_try_get_tag_string(native_meta, "Exif.Image.DateTime", NULL);
+                            existing_dt = gexiv2_metadata_try_get_tag_string(read_meta, "Exif.Image.DateTime", NULL);
+                        g_rec_mutex_unlock(&s_gexiv2_mutex);
                         if (existing_dt) {
                             if (strlen(existing_dt) >= 19 && existing_dt[10] == ' ') {
                                 g_strlcpy(existing_date, existing_dt, 11);
@@ -1244,28 +1373,11 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                             }
                             g_free(existing_dt);
                         }
-                    }
-                    if (!existing_date[0] && !ctx->snapshot.use_native_metadata) {
-                        char *exif_cmd_fallback = get_exiftool_cmd();
-                        char *quoted_src_dt = g_shell_quote(src_path);
-                        char *read_dt_cmd = g_strdup_printf("%s -DateTimeOriginal -s3 %s", exif_cmd_fallback, quoted_src_dt);
-                        FILE *fp_dt = popen(read_dt_cmd, "r");
-                        char dt_buf[64] = {0};
-                        if (fp_dt) {
-                            if (fgets(dt_buf, sizeof(dt_buf), fp_dt)) {
-                                g_strchomp(dt_buf);
-                                if (strlen(dt_buf) >= 19 && dt_buf[10] == ' ') {
-                                    g_strlcpy(existing_date, dt_buf, 11);
-                                    g_strlcpy(existing_time, dt_buf + 11, 9);
-                                } else {
-                                    sscanf(dt_buf, "%10s", existing_date);
-                                }
-                            }
-                            pclose(fp_dt);
+                        if (temp_meta) {
+                            g_rec_mutex_lock(&s_gexiv2_mutex);
+                            g_object_unref(read_meta);
+                            g_rec_mutex_unlock(&s_gexiv2_mutex);
                         }
-                        g_free(read_dt_cmd);
-                        g_free(quoted_src_dt);
-                        g_free(exif_cmd_fallback);
                     }
                 }
 
@@ -1356,6 +1468,8 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                 /* Option 3: In-memory GExiv2 metadata writer (0 subprocesses) */
                 GError *gex_err = native_gex_err;
                 GExiv2Metadata *meta = native_meta;
+
+                g_rec_mutex_lock(&s_gexiv2_mutex);
 
                 if (!meta) {
                     meta = gexiv2_metadata_new();
@@ -1508,6 +1622,8 @@ static void export_image_worker(gpointer data, gpointer user_data) {
                     }
                     g_object_unref(meta);
                 }
+
+                g_rec_mutex_unlock(&s_gexiv2_mutex);
             } else if (ctx->argfile_fp != NULL) {
                 /* Option 2: Write commands to batch argfile (-@) */
                 g_mutex_lock(&ctx->argfile_mutex);
@@ -1760,7 +1876,6 @@ static void export_image_worker(gpointer data, gpointer user_data) {
 
     g_free(custom_text);
     g_free(azimuth_str);
-    g_free(orig_basename);
     g_free(pu_code);
     g_free(out_dir);
     g_free(out_path);
@@ -1768,10 +1883,13 @@ static void export_image_worker(gpointer data, gpointer user_data) {
 
     /* Report progress on every image; the UI updates it in place on one line. */
     done = g_atomic_int_add(&ctx->completed, 1) + 1;
+    g_printerr("[STAMPY] [%d/%u] exported: %s\n", done, total, orig_basename);
+    g_free(orig_basename);
     {
         char *msg = g_strdup_printf("[%d/%u] photos processed...", done, total);
         send_progress_to_ui(window_self, (double)done / (double)total, TRUE, msg, FALSE, FALSE);
         g_free(msg);
+        g_message("[Export %d/%u] photos processed", done, total);
     }
 }
 
@@ -1779,6 +1897,9 @@ static void export_image_worker(gpointer data, gpointer user_data) {
 typedef struct {
     GtkApplication *app;
     StampyWindow *self;
+    GFile *export_folder;
+    GPtrArray *image_files;
+    ExportSettingsSnapshot snapshot;
     guint cookie;
     guint total;
     guint completed;
@@ -1787,6 +1908,7 @@ typedef struct {
     guint warn_gps;
     guint warn_wm;
     guint warn_id;
+    gboolean aborted;
 } ExportFinishData;
 
 static gboolean on_export_finished_idle(gpointer user_data) {
@@ -1801,57 +1923,176 @@ static gboolean on_export_finished_idle(gpointer user_data) {
     }
 
     /* Desktop notification. */
-    if (data->app) {
-        GNotification *notif = g_notification_new("Stampy Export Complete");
-        char *notif_body = g_strdup_printf("%u photos exported successfully.", data->success);
+    if (!data->aborted && data->app && !(data->self && data->self->close_after_export)) {
+        g_autoptr(GNotification) notif = g_notification_new("Stampy Export Complete");
+        g_autofree char *notif_body = g_strdup_printf("%u photos exported successfully.", data->success);
         g_notification_set_body(notif, notif_body);
         g_notification_set_priority(notif, G_NOTIFICATION_PRIORITY_NORMAL);
         g_application_send_notification(G_APPLICATION(data->app), "export-complete", notif);
-        g_free(notif_body);
-        g_object_unref(notif);
     }
 
     /* Dialog showing post-export summary */
     if (data->self) {
-        gboolean incomplete = data->completed < data->total;
-        gboolean has_warnings = data->warn_gps > 0 || data->warn_wm > 0 || data->warn_id > 0;
+        data->self->export_active = FALSE;
 
-        body = g_string_new("");
+        if (!data->self->disposed) {
+            if (data->self->close_after_export) {
+                gtk_window_destroy(GTK_WINDOW(data->self));
+            } else if (!data->aborted) {
+                gboolean incomplete = data->completed < data->total;
+                gboolean has_warnings = data->warn_gps > 0 || data->warn_wm > 0 || data->warn_id > 0;
+                GtkWindow *parent = data->self->dialog_parent ? data->self->dialog_parent : GTK_WINDOW(data->self);
 
-        if (data->errors == 0 && !has_warnings && !incomplete) {
-            heading = g_strdup("Export Finished Successfully");
-            g_string_append_printf(body, "All %u photos were exported successfully with complete metadata.", data->success);
-        } else {
-            heading = incomplete && data->errors == 0 && !has_warnings
-                          ? g_strdup("Export Cancelled")
-                          : g_strdup_printf("Export Finished (%u Photos)", data->success);
-            g_string_append_printf(body, "• Successful: %u of %u\n", data->success, data->total);
-            if (data->warn_gps > 0 || data->warn_wm > 0 || data->warn_id > 0) {
-                g_string_append(body, "\n• Warnings:\n");
-                if (data->warn_gps > 0)
-                    g_string_append_printf(body, "   - Missing GPS coordinates: %u\n", data->warn_gps);
-                if (data->warn_wm > 0)
-                    g_string_append_printf(body, "   - Missing Watermark text: %u\n", data->warn_wm);
-                if (data->warn_id > 0)
-                    g_string_append_printf(body, "   - Missing Image Code/ID: %u\n", data->warn_id);
-            }
-            if (data->errors > 0) {
-                g_string_append_printf(body, "\n• Errors:\n   - Failed to render/save: %u\n", data->errors);
+                body = g_string_new("");
+
+                if (data->errors == 0 && !has_warnings && !incomplete) {
+                    heading = g_strdup("Export Finished Successfully");
+                    g_string_append_printf(body, "All %u photos were exported successfully with complete metadata.", data->success);
+                } else {
+                    heading = incomplete && data->errors == 0 && !has_warnings
+                                  ? g_strdup("Export Cancelled")
+                                  : g_strdup_printf("Export Finished (%u Photos)", data->success);
+                    g_string_append_printf(body, "• Successful: %u of %u\n", data->success, data->total);
+                    if (data->warn_gps > 0 || data->warn_wm > 0 || data->warn_id > 0) {
+                        g_string_append(body, "\n• Warnings:\n");
+                        if (data->warn_gps > 0)
+                            g_string_append_printf(body, "   - Missing GPS coordinates: %u\n", data->warn_gps);
+                        if (data->warn_wm > 0)
+                            g_string_append_printf(body, "   - Missing Watermark text: %u\n", data->warn_wm);
+                        if (data->warn_id > 0)
+                            g_string_append_printf(body, "   - Missing Image Code/ID: %u\n", data->warn_id);
+                    }
+                    if (data->errors > 0) {
+                        g_string_append_printf(body, "\n• Errors:\n   - Failed to render/save: %u\n", data->errors);
+                    }
+                }
+
+                alert = adw_alert_dialog_new(heading, body->str);
+                adw_alert_dialog_add_response(ADW_ALERT_DIALOG(alert), "ok", "OK");
+                adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "ok");
+                adw_dialog_present(alert, GTK_WIDGET(parent));
+
+                if (data->self->quick_finish_cb) {
+                    data->self->quick_finish_cb(data->self, alert, data->self->quick_cb_data);
+                }
+
+                g_free(heading);
+                g_string_free(body, TRUE);
             }
         }
-
-        alert = adw_alert_dialog_new(heading, body->str);
-        adw_alert_dialog_add_response(ADW_ALERT_DIALOG(alert), "ok", "OK");
-        adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "ok");
-        adw_dialog_present(alert, GTK_WIDGET(data->self));
-
-        g_free(heading);
-        g_string_free(body, TRUE);
     }
 
-    g_object_unref(data->app);
+    free_export_snapshot(&data->snapshot);
+    g_clear_object(&data->export_folder);
+    g_clear_pointer(&data->image_files, g_ptr_array_unref);
+    g_clear_object(&data->self);
+    g_clear_object(&data->app);
     g_free(data);
     return G_SOURCE_REMOVE;
+}
+
+static void run_timephoto_rename(const char *folder_path, StampyWindow *window_self) {
+    if (!folder_path || !*folder_path) return;
+
+    char *exif_cmd = get_exiftool_cmd();
+    gchar *quoted_folder = g_shell_quote(folder_path);
+    /* ExifTool command to rename all images recursively to TimePhoto_YYYYMMDD_HHMMSS */
+    char *cmd = g_strdup_printf(
+        "%s -r -overwrite_original -ext jpg -ext jpeg -ext png "
+        "'-FileName<TimePhoto_${CreateDate}.%%e' "
+        "'-FileName<TimePhoto_${DateTimeOriginal}.%%e' "
+        "-d '%%Y%%m%%d_%%H%%M%%S%%%%-c' %s",
+        exif_cmd, quoted_folder);
+
+    char *out_stdout = NULL;
+    char *out_stderr = NULL;
+    int exit_status = 0;
+    GError *err = NULL;
+
+    if (g_spawn_command_line_sync(cmd, &out_stdout, &out_stderr, &exit_status, &err)) {
+        if (out_stdout && *out_stdout) {
+            char *log_msg = g_strdup_printf("[INFO] TimePhoto rename: %s", g_strstrip(out_stdout));
+            send_progress_to_ui(window_self, 1.0, FALSE, log_msg, FALSE, FALSE);
+            g_free(log_msg);
+        }
+    } else if (err) {
+        char *log_msg = g_strdup_printf("[WARN] TimePhoto rename failed: %s", err->message);
+        send_progress_to_ui(window_self, 1.0, FALSE, log_msg, FALSE, FALSE);
+        g_free(log_msg);
+        g_clear_error(&err);
+    }
+
+    g_free(out_stdout);
+    g_free(out_stderr);
+    g_free(cmd);
+    g_free(quoted_folder);
+    g_free(exif_cmd);
+}
+
+static void run_post_export_script(const char *folder_path, const char *script_path, const char *script_args, guint total, int success, StampyWindow *window_self) {
+    if (!script_path || !*script_path || !g_file_test(script_path, G_FILE_TEST_EXISTS)) {
+        if (script_path && *script_path) {
+            char *log_msg = g_strdup_printf("[WARN] Post-export script not found: %s", script_path);
+            send_progress_to_ui(window_self, 1.0, FALSE, log_msg, FALSE, FALSE);
+            g_free(log_msg);
+        }
+        return;
+    }
+
+    gchar *quoted_script = g_shell_quote(script_path);
+    gchar *quoted_folder = g_shell_quote(folder_path);
+    char *full_cmd = g_strdup_printf("%s %s %s", quoted_script, quoted_folder, (script_args && *script_args) ? script_args : "");
+
+    char *out_stdout = NULL;
+    char *out_stderr = NULL;
+    int exit_status = 0;
+    GError *err = NULL;
+
+    /* Set up environment variables for the script */
+    char **envp = g_get_environ();
+    envp = g_environ_setenv(envp, "STAMPY_EXPORT_FOLDER", folder_path, TRUE);
+    char *tot_str = g_strdup_printf("%u", total);
+    char *suc_str = g_strdup_printf("%d", success);
+    envp = g_environ_setenv(envp, "STAMPY_TOTAL", tot_str, TRUE);
+    envp = g_environ_setenv(envp, "STAMPY_SUCCESS", suc_str, TRUE);
+    g_free(tot_str);
+    g_free(suc_str);
+
+    char *start_msg = g_strdup_printf("[INFO] Executing post-export script: %s", script_path);
+    send_progress_to_ui(window_self, 1.0, FALSE, start_msg, FALSE, FALSE);
+    g_free(start_msg);
+
+    int argc = 0;
+    char **argv = NULL;
+    if (g_shell_parse_argv(full_cmd, &argc, &argv, &err)) {
+        if (g_spawn_sync(NULL, argv, envp, G_SPAWN_SEARCH_PATH, NULL, NULL, &out_stdout, &out_stderr, &exit_status, &err)) {
+            if (out_stdout && *out_stdout) {
+                char *log_msg = g_strdup_printf("[INFO] Script output: %s", g_strstrip(out_stdout));
+                send_progress_to_ui(window_self, 1.0, FALSE, log_msg, FALSE, FALSE);
+                g_free(log_msg);
+            }
+            if (out_stderr && *out_stderr) {
+                char *log_msg = g_strdup_printf("[WARN] Script stderr: %s", g_strstrip(out_stderr));
+                send_progress_to_ui(window_self, 1.0, FALSE, log_msg, FALSE, FALSE);
+                g_free(log_msg);
+            }
+        }
+        g_strfreev(argv);
+    }
+
+    if (err) {
+        char *log_msg = g_strdup_printf("[WARN] Post-export script error: %s", err->message);
+        send_progress_to_ui(window_self, 1.0, FALSE, log_msg, FALSE, FALSE);
+        g_free(log_msg);
+        g_clear_error(&err);
+    }
+
+    g_strfreev(envp);
+    g_free(out_stdout);
+    g_free(out_stderr);
+    g_free(full_cmd);
+    g_free(quoted_folder);
+    g_free(quoted_script);
 }
 
 static gpointer export_worker_thread(gpointer user_data) {
@@ -1863,17 +2104,25 @@ static gpointer export_worker_thread(gpointer user_data) {
     char *msg;
     guint completed = 0;
     int success = 0, errors = 0, warn_gps = 0, warn_wm = 0, warn_id = 0;
+    ExportFinishData *finish;
 
     td = (ExportThreadData *)user_data;
     if (!td || !td->self) return NULL;
 
     window_self = td->self;
     folder_path = td->export_folder ? g_file_get_path(td->export_folder) : NULL;
-    total = (window_self->image_files) ? window_self->image_files->len : 0;
+    total = td->image_files ? td->image_files->len : 0;
 
     if (!folder_path) {
-        free_export_snapshot(&td->snapshot);
-        if (td->export_folder) g_object_unref(td->export_folder);
+        finish = g_new0(ExportFinishData, 1);
+        finish->app = td->app;
+        finish->self = td->self;
+        finish->export_folder = td->export_folder;
+        finish->image_files = td->image_files;
+        finish->snapshot = td->snapshot;
+        finish->cookie = td->inhibit_cookie;
+        finish->aborted = TRUE;
+        g_idle_add(on_export_finished_idle, finish);
         g_free(td);
         return NULL;
     }
@@ -1882,12 +2131,18 @@ static gpointer export_worker_thread(gpointer user_data) {
 
     /* Export in parallel with a thread pool. */
     {
+        static gboolean s_mutex_inited = FALSE;
         ExportWorkerContext ctx;
         GThreadPool *pool;
         gint max_threads = stampy_config_get_export_threads();
         int n_cpus = g_get_num_processors();
         GError *pool_err = NULL;
         ExportWorkItem *item;
+
+        if (!s_mutex_inited) {
+            g_rec_mutex_init(&s_gexiv2_mutex);
+            s_mutex_inited = TRUE;
+        }
 
         if (n_cpus < 1) n_cpus = 1;
 
@@ -1898,10 +2153,12 @@ static gpointer export_worker_thread(gpointer user_data) {
             msg = g_strdup_printf("[INFO] Starting parallel export of %u items (using %d worker threads on %d CPU cores)...",
                                   total, max_threads, n_cpus);
         }
+        g_printerr("[STAMPY] %s (native_meta=%d)\n", msg, td->snapshot.use_native_metadata);
         send_progress_to_ui(window_self, 0.0, TRUE, msg, FALSE, FALSE);
         g_free(msg);
 
         ctx.self = window_self;
+        ctx.image_files = td->image_files;
         ctx.folder_path = folder_path;
         ctx.snapshot = td->snapshot;  /* read-only during export */
         ctx.total = total;
@@ -1931,6 +2188,10 @@ static gpointer export_worker_thread(gpointer user_data) {
             if (arg_fd >= 0) {
                 ctx.argfile_fp = fdopen(arg_fd, "w");
             }
+        }
+
+        if (window_self->file_watermark) {
+            stampy_lookup_docx_data(window_self, "", "1", NULL, NULL);
         }
 
         /* Thread count comes from Preferences (all cores or a manual limit). */
@@ -2007,6 +2268,16 @@ static gpointer export_worker_thread(gpointer user_data) {
         warn_id = g_atomic_int_get(&ctx.warn_id_missing);
     }
 
+    if (g_atomic_int_get(&window_self->export_cancel_flag) == 0) {
+        if (td->snapshot.export_timephoto_rename && folder_path) {
+            run_timephoto_rename(folder_path, window_self);
+        }
+
+        if (td->snapshot.post_script_enable && folder_path && td->snapshot.post_script_path && *td->snapshot.post_script_path) {
+            run_post_export_script(folder_path, td->snapshot.post_script_path, td->snapshot.post_script_args, total, success, window_self);
+        }
+    }
+
     send_progress_to_ui(window_self, 1.0, FALSE, "Export Finished!", TRUE, TRUE);
 
     /* Post-export terminal summary */
@@ -2029,40 +2300,46 @@ static gpointer export_worker_thread(gpointer user_data) {
         g_string_free(summary, TRUE);
     }
 
-    /* The snapshot was copied into ctx; td->snapshot is still ours to free. */
-    free_export_snapshot(&td->snapshot);
-
-    /* Uninhibit and notify on the main thread. */
-    {
-        GtkApplication *app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(window_self)));
-        if (app) {
-            ExportFinishData *finish = g_new0(ExportFinishData, 1);
-            finish->app = g_object_ref(app);
-            finish->self = window_self;
-            finish->cookie = td->inhibit_cookie;
-            finish->completed = completed;
-            finish->total = total;
-            finish->success = success;
-            finish->errors = errors;
-            finish->warn_gps = warn_gps;
-            finish->warn_wm = warn_wm;
-            finish->warn_id = warn_id;
-            g_idle_add(on_export_finished_idle, finish);
-        }
-    }
+    /* Uninhibit, notify, and release GObject refs on the main thread. */
+    finish = g_new0(ExportFinishData, 1);
+    finish->app = td->app;
+    finish->self = td->self;
+    finish->export_folder = td->export_folder;
+    finish->image_files = td->image_files;
+    finish->snapshot = td->snapshot;
+    finish->cookie = td->inhibit_cookie;
+    finish->completed = completed;
+    finish->total = total;
+    finish->success = success;
+    finish->errors = errors;
+    finish->warn_gps = warn_gps;
+    finish->warn_wm = warn_wm;
+    finish->warn_id = warn_id;
+    g_idle_add(on_export_finished_idle, finish);
 
     g_free(folder_path);
-    if (td->export_folder) g_object_unref(td->export_folder);
     g_free(td);
     return NULL;
 }
 
 static void begin_export_to_folder(StampyWindow *window_self, GFile *folder) {
     ExportThreadData *td;
+    GtkApplication *app;
+    g_autofree char *folder_path = folder ? g_file_get_path(folder) : NULL;
+
+    if (!folder_path) {
+        if (folder) g_object_unref(folder);
+        stampy_show_toast(window_self, "Invalid export destination folder!");
+        return;
+    }
 
     g_atomic_int_set(&window_self->export_cancel_flag, 0);
     window_self->export_active = TRUE;
     gtk_window_set_title(GTK_WINDOW(window_self), "Exporting…");
+
+    if (window_self->quick_progress_cb) {
+        window_self->quick_progress_cb(window_self, 0.0, TRUE, "Exporting photos…", FALSE, window_self->quick_cb_data);
+    }
 
     if (window_self->btn_header_export) gtk_widget_set_visible(window_self->btn_header_export, FALSE);
     if (window_self->btn_header_cancel) gtk_widget_set_visible(window_self->btn_header_cancel, TRUE);
@@ -2070,41 +2347,42 @@ static void begin_export_to_folder(StampyWindow *window_self, GFile *folder) {
     if (window_self->box_right_panel) gtk_widget_set_sensitive(window_self->box_right_panel, FALSE);
     if (window_self->file_listbox) gtk_widget_set_sensitive(window_self->file_listbox, FALSE);
 
+    app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(window_self)));
+
     td = g_new0(ExportThreadData, 1);
-    td->self = window_self;
+    td->app = app ? g_object_ref(app) : NULL;
+    td->self = g_object_ref(window_self);
     td->export_folder = folder;
+    td->image_files = window_self->image_files ? g_ptr_array_ref(window_self->image_files) : NULL;
 
     /* Keep the display awake during export. */
-    {
-        GtkApplication *app = GTK_APPLICATION(gtk_window_get_application(GTK_WINDOW(window_self)));
-        if (app) {
-            td->inhibit_cookie = gtk_application_inhibit(app, GTK_WINDOW(window_self),
-                GTK_APPLICATION_INHIBIT_IDLE | GTK_APPLICATION_INHIBIT_SUSPEND,
-                "Photo export is in progress");
-        }
+    if (app) {
+        GtkWindow *inhibit_win = window_self->dialog_parent ? window_self->dialog_parent : GTK_WINDOW(window_self);
+        td->inhibit_cookie = gtk_application_inhibit(app, inhibit_win,
+            GTK_APPLICATION_INHIBIT_IDLE | GTK_APPLICATION_INHIBIT_SUSPEND,
+            "Photo export is in progress");
     }
 
     snapshot_export_settings(window_self, &td->snapshot);
 
-    g_thread_new("stampy-export-thread", export_worker_thread, td);
+    g_thread_unref(g_thread_new("stampy-export-thread", export_worker_thread, td));
 }
 
 static void on_export_folder_selected(GObject *source, GAsyncResult *res, gpointer user_data) {
     GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
-    StampyWindow *window_self = STAMPY_WINDOW(user_data);
-    GError *error = NULL;
-    GFile *folder = gtk_file_dialog_select_folder_finish(dialog, res, &error);
+    g_autoptr(StampyWindow) window_self = STAMPY_WINDOW(user_data);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GFile) folder = gtk_file_dialog_select_folder_finish(dialog, res, &error);
 
-    if (error || !folder) {
-        if (error) g_clear_error(&error);
+    if (error || !folder || !window_self || window_self->disposed) {
         return;
     }
 
-    begin_export_to_folder(window_self, folder);
+    begin_export_to_folder(window_self, g_steal_pointer(&folder));
 }
 
 void stampy_start_export(StampyWindow *window_self) {
-    GtkFileDialog *dialog;
+    g_autoptr(GtkFileDialog) dialog = NULL;
 
     if (!window_self || !window_self->image_files || window_self->image_files->len == 0) {
         stampy_show_toast(window_self, "No images loaded in list!");
@@ -2122,7 +2400,9 @@ void stampy_start_export(StampyWindow *window_self) {
 
     dialog = gtk_file_dialog_new();
     gtk_file_dialog_set_title(dialog, "Select Export Destination Folder");
-    gtk_file_dialog_select_folder(dialog, GTK_WINDOW(window_self), NULL, on_export_folder_selected, window_self);
+    gtk_file_dialog_select_folder(dialog,
+                                  window_self->dialog_parent ? window_self->dialog_parent : GTK_WINDOW(window_self),
+                                  NULL, on_export_folder_selected, g_object_ref(window_self));
 }
 
 static void on_btn_header_export_clicked(GtkButton *btn, gpointer user_data) {

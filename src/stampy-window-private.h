@@ -1,11 +1,8 @@
 #pragma once
 
-#include <adwaita.h>
+#include "stampy-window.h"
 
 G_BEGIN_DECLS
-
-#define STAMPY_TYPE_WINDOW (stampy_window_get_type())
-G_DECLARE_FINAL_TYPE(StampyWindow, stampy_window, STAMPY, WINDOW, AdwApplicationWindow)
 
 typedef struct {
     int no;
@@ -16,6 +13,32 @@ typedef struct {
     double time_val;  /* Excel time fraction from XLSX column F */
     char date_str[16]; /* Excel date YYYY:MM:DD from XLSX if present */
 } GeolocationEntry;
+
+typedef struct {
+    gboolean title_experimental;
+    gboolean xlsx_time_exif;
+    gboolean meta_title;
+    gboolean meta_subject;
+    gboolean meta_tags;
+    gboolean meta_comments;
+    gboolean meta_date;
+    char meta_date_source[32];
+    gboolean meta_time;
+    gboolean meta_strip_all_source;
+    gboolean meta_remove_camera;
+    gboolean meta_remove_serial;
+    gboolean meta_remove_software;
+    gboolean meta_remove_author;
+    gboolean meta_remove_image_id;
+    char *meta_strip_text;
+    gboolean export_timephoto_rename;
+} StampyQuickMeta;
+
+typedef void (*StampyQuickScanCb)(StampyWindow *ctrl, guint image_count, gpointer user_data);
+typedef void (*StampyQuickBannerCb)(StampyWindow *ctrl, gpointer user_data);
+typedef void (*StampyQuickProgressCb)(StampyWindow *ctrl, double fraction, gboolean visible, const char *message, gboolean is_finished, gpointer user_data);
+typedef void (*StampyQuickFinishCb)(StampyWindow *ctrl, AdwDialog *alert, gpointer user_data);
+typedef void (*StampyQuickToastCb)(StampyWindow *ctrl, const char *title, gpointer user_data);
 
 struct _StampyWindow {
     AdwApplicationWindow parent_instance;
@@ -132,10 +155,25 @@ struct _StampyWindow {
     gboolean has_active_status_line;
     GPtrArray *pu_folders;
     char *selected_pu_folder;
+
+    /* Quick-Stamp controller mode */
+    gboolean disposed;
+    gboolean quick_mode;
+    gboolean close_after_export;
+    GtkWindow *dialog_parent;
+    gboolean has_quick_meta;
+    StampyQuickMeta quick_meta;
+    gboolean has_quick_auto_stamped;
+    gboolean quick_auto_stamped;
+    StampyQuickScanCb quick_scan_cb;
+    StampyQuickBannerCb quick_banner_cb;
+    StampyQuickProgressCb quick_progress_cb;
+    StampyQuickFinishCb quick_finish_cb;
+    StampyQuickToastCb quick_toast_cb;
+    gpointer quick_cb_data;
 };
 
 /* Window setup. */
-StampyWindow *stampy_window_new(GtkApplication *app);
 void stampy_show_toast(StampyWindow *self, const char *title);
 void stampy_setup_actions_and_menus(StampyWindow *self);
 void stampy_setup_file_handlers_and_dnd(StampyWindow *self);
@@ -221,9 +259,14 @@ void on_xlsx_time_exif_toggled(GObject *object, GParamSpec *pspec, gpointer user
 #define STAMPY_CONFIG_KEY_META_REMOVE_SOFTWARE "meta-remove-software" /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_META_REMOVE_AUTHOR   "meta-remove-author"   /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_META_REMOVE_IMAGE_ID "meta-remove-image-id" /* bool, default FALSE */
-#define STAMPY_CONFIG_KEY_USE_NATIVE_METADATA "use-native-metadata" /* bool, default FALSE */
-#define STAMPY_CONFIG_KEY_BATCH_EXIFTOOL "batch-exiftool" /* bool, default FALSE */
-#define STAMPY_CONFIG_KEY_EXPORT_OVERSUBSCRIBE "export-oversubscribe" /* bool, default TRUE */
+#define STAMPY_CONFIG_KEY_META_STRIP_TEXT      "meta-strip-text"      /* string, default "" */
+#define STAMPY_CONFIG_KEY_TIMEPHOTO_RENAME     "export-timephoto-rename" /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_POST_SCRIPT_ENABLE   "export-post-script-enable" /* bool, default FALSE */
+#define STAMPY_CONFIG_KEY_POST_SCRIPT_PATH     "export-post-script-path" /* string, default "" */
+#define STAMPY_CONFIG_KEY_POST_SCRIPT_ARGS     "export-post-script-args" /* string, default "" */
+#define STAMPY_CONFIG_KEY_USE_NATIVE_METADATA "use-native-metadata" /* bool, default TRUE */
+#define STAMPY_CONFIG_KEY_BATCH_EXIFTOOL "batch-exiftool" /* bool, default TRUE */
+#define STAMPY_CONFIG_KEY_EXPORT_OVERSUBSCRIBE "export-oversubscribe" /* bool, default FALSE */
 #define STAMPY_CONFIG_KEY_WARN_LANDSCAPE "warn-landscape" /* bool, default TRUE */
 #define STAMPY_CONFIG_KEY_AUTO_STAMPED_FOLDER "auto-stamped-folder" /* bool, default TRUE */
 /* New preferences only need a key here plus the get/set helpers below. */

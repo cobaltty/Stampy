@@ -1,10 +1,11 @@
 [Desktop Entry]
 Name=Stampy
-Exec=stampy
+Exec=stampy %U
 Icon=com.cobaltty.stampy
 Terminal=false
 Type=Application
 Categories=Utility;
 Keywords=GTK;
+MimeType=inode/directory;image/jpeg;image/png;
 StartupNotify=true
 DBusActivatable=true

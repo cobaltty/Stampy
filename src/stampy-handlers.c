@@ -262,6 +262,11 @@ static void on_popover_closed(GtkPopover *popover, gpointer user_data) {
     }
 }
 
+static void on_hover_button_destroy(GtkWidget *button, gpointer user_data) {
+    (void)user_data;
+    g_object_set_data(G_OBJECT(button), "hover-popover-data", NULL);
+}
+
 static void attach_hover_popover(StampyWindow *self, GtkWidget *button, GtkWidget *popover, GtkWidget *content_box, gboolean intercept_primary_click) {
     HoverPopoverData *data = g_new0(HoverPopoverData, 1);
     GtkEventController *motion_btn;
@@ -299,6 +304,7 @@ static void attach_hover_popover(StampyWindow *self, GtkWidget *button, GtkWidge
     }
 
     g_object_set_data_full(G_OBJECT(button), "hover-popover-data", data, hover_popover_data_free);
+    g_signal_connect(button, "destroy", G_CALLBACK(on_hover_button_destroy), NULL);
 }
 
 typedef struct {
@@ -705,7 +711,7 @@ static gboolean populate_chunk_cb(gpointer user_data) {
     StampyWindow *self = task->self;
     guint end;
 
-    if (task->generation != self->populate_generation ||
+    if (self->disposed || task->generation != self->populate_generation ||
         !task->files || task->total != task->files->len) {
         self->populate_source_id = 0;
         return G_SOURCE_REMOVE;
@@ -1000,7 +1006,7 @@ static void stampy_rebuild_file_listbox(StampyWindow *self) {
 }
 
 void stampy_populate_file_listbox(StampyWindow *self) {
-    if (!self || !self->file_listbox) return;
+    if (!self || (!self->file_listbox && !self->quick_mode)) return;
 
     dedupe_image_files(self);
 
@@ -1011,6 +1017,12 @@ void stampy_populate_file_listbox(StampyWindow *self) {
 
     /* Update PU folder dropdown and active selection */
     stampy_populate_pu_dropdown(self);
+
+    if (self->quick_mode) {
+        stampy_check_horizontal_photos(self);
+        stampy_check_missing_data(self);
+        return;
+    }
 
     stampy_rebuild_file_listbox(self);
 }
@@ -1346,20 +1358,20 @@ static void on_preferences_activated(GSimpleAction *action, GVariant *parameter,
 }
 
 void stampy_setup_actions_and_menus(StampyWindow *self) {
-    GSimpleAction *act_add;
-    GSimpleAction *act_sel_all;
-    GSimpleAction *act_desel_all;
-    GSimpleAction *act_rem_sel;
-    GSimpleAction *act_whats_new;
-    GSimpleAction *act_watermark;
-    GSimpleAction *act_geolocation;
-    GSimpleAction *act_compass;
-    GSimpleAction *act_compass_lock;
-    GSimpleAction *act_export;
-    GSimpleAction *act_cancel_export;
-    GSimpleAction *act_remove_all;
-    GSimpleAction *act_select_preset;
-    GSimpleAction *act_preferences;
+    g_autoptr(GSimpleAction) act_add = NULL;
+    g_autoptr(GSimpleAction) act_sel_all = NULL;
+    g_autoptr(GSimpleAction) act_desel_all = NULL;
+    g_autoptr(GSimpleAction) act_rem_sel = NULL;
+    g_autoptr(GSimpleAction) act_whats_new = NULL;
+    g_autoptr(GSimpleAction) act_watermark = NULL;
+    g_autoptr(GSimpleAction) act_geolocation = NULL;
+    g_autoptr(GSimpleAction) act_compass = NULL;
+    g_autoptr(GSimpleAction) act_compass_lock = NULL;
+    g_autoptr(GSimpleAction) act_export = NULL;
+    g_autoptr(GSimpleAction) act_cancel_export = NULL;
+    g_autoptr(GSimpleAction) act_remove_all = NULL;
+    g_autoptr(GSimpleAction) act_select_preset = NULL;
+    g_autoptr(GSimpleAction) act_preferences = NULL;
 
     if (!self) return;
 

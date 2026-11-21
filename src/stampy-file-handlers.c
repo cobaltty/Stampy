@@ -572,6 +572,9 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
         } else {
             stampy_append_log(self, "[WARN] Failed to parse entries from CSV.");
         }
+        if (self->quick_banner_cb) {
+            self->quick_banner_cb(self, self->quick_cb_data);
+        }
         return;
     }
 
@@ -916,6 +919,9 @@ void parse_excel_file(StampyWindow *self, GFile *file) {
     } else {
         stampy_append_log(self, "[WARN] Failed to parse cell references from XLSX.");
     }
+    if (self->quick_banner_cb) {
+        self->quick_banner_cb(self, self->quick_cb_data);
+    }
 }
 
 static gboolean file_key_equal(gconstpointer a, gconstpointer b) {
@@ -1095,22 +1101,19 @@ static void scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(user_data);
     GTask *task = G_TASK(res);
     ScanTaskData *scan = g_task_get_task_data(task);
-    GError *error = NULL;
-    GPtrArray *images = g_task_propagate_pointer(task, &error);
-    GHashTable *known;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GPtrArray) images = g_task_propagate_pointer(task, &error);
+    g_autoptr(GHashTable) known = NULL;
     guint i;
     int added_count = 0;
 
-    if (!self) {
-        if (images) g_ptr_array_unref(images);
-        g_clear_error(&error);
+    (void)source;
+    if (!self || self->disposed) {
         return;
     }
 
     /* Ignore results from a scan that has already been superseded. */
     if (!scan || scan->generation != self->scan_generation) {
-        if (images) g_ptr_array_unref(images);
-        g_clear_error(&error);
         return;
     }
 
@@ -1119,7 +1122,9 @@ static void scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
 
     if (!images) {
         stampy_append_log(self, "[WARN] Folder scan cancelled or failed.");
-        g_clear_error(&error);
+        if (self->quick_scan_cb) {
+            self->quick_scan_cb(self, self->image_files ? self->image_files->len : 0, self->quick_cb_data);
+        }
         return;
     }
 
@@ -1129,25 +1134,21 @@ static void scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
 
     known = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     for (i = 0; i < self->image_files->len; i++) {
-        char *path = g_file_get_path(g_ptr_array_index(self->image_files, i));
-        if (path) g_hash_table_add(known, path);
+        g_autofree char *path = g_file_get_path(g_ptr_array_index(self->image_files, i));
+        if (path) g_hash_table_add(known, g_steal_pointer(&path));
     }
 
     for (i = 0; i < images->len; i++) {
         GFile *file = g_ptr_array_index(images, i);
-        char *path = g_file_get_path(file);
+        g_autofree char *path = g_file_get_path(file);
         gboolean exists = path && g_hash_table_contains(known, path);
 
         if (!exists) {
-            if (path) g_hash_table_add(known, g_strdup(path));
+            if (path) g_hash_table_add(known, g_steal_pointer(&path));
             g_ptr_array_add(self->image_files, g_object_ref(file));
             added_count++;
         }
-        g_free(path);
     }
-
-    g_hash_table_unref(known);
-    g_ptr_array_unref(images);
 
     /* Remember the directory tree so an unchanged re-drop can skip scanning. */
     {
@@ -1160,8 +1161,7 @@ static void scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
         self->scan_cache_sources = cached_sources;
 
         if (self->scan_cache_dirs) g_hash_table_unref(self->scan_cache_dirs);
-        self->scan_cache_dirs = scan->dir_times;
-        scan->dir_times = NULL;
+        self->scan_cache_dirs = g_steal_pointer(&scan->dir_times);
     }
 
     if (added_count > 0) {
@@ -1175,16 +1175,28 @@ static void scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
 
         if (scan->sources->len > 0)
             stampy_set_import_root(self, g_ptr_array_index(scan->sources, 0));
-        stampy_prepare_default_export_folder(self);
+        if (!self->quick_mode)
+            stampy_prepare_default_export_folder(self);
         stampy_populate_file_listbox(self);
         stampy_append_log(self, "[INFO] Images imported successfully.");
         stampy_show_toast(self, "Images added!");
-        stampy_render_live_preview(self);
+        if (!self->quick_mode)
+            stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
         stampy_check_missing_data(self);
+    } else if (self->quick_mode && scan->sources->len > 0) {
+        GSList *sources = NULL;
+
+        for (i = 0; i < scan->sources->len; i++)
+            sources = g_slist_prepend(sources, g_object_ref(g_ptr_array_index(scan->sources, i)));
+
+        stampy_auto_detect_companion_files(self, sources);
+        g_slist_free_full(sources, g_object_unref);
     }
 
-    g_clear_error(&error);
+    if (self->quick_scan_cb) {
+        self->quick_scan_cb(self, self->image_files ? self->image_files->len : 0, self->quick_cb_data);
+    }
 }
 
 static gboolean scan_cache_sources_match(StampyWindow *self, GSList *files) {
@@ -1247,7 +1259,6 @@ static gboolean scan_cache_is_fresh(StampyWindow *self) {
 /* Imports dropped image files and folders asynchronously. */
 void stampy_add_image_files(StampyWindow *self, GSList *files) {
     ScanTaskData *scan;
-    GTask *task;
     GCancellable *cancellable;
     GSList *l;
 
@@ -1257,6 +1268,9 @@ void stampy_add_image_files(StampyWindow *self, GSList *files) {
     if (scan_cache_sources_match(self, files) && scan_cache_is_fresh(self)) {
         stampy_show_toast(self, "Folder already imported");
         stampy_append_log(self, "[INFO] Folder unchanged; skipped rescan.");
+        if (self->quick_scan_cb) {
+            self->quick_scan_cb(self, self->image_files ? self->image_files->len : 0, self->quick_cb_data);
+        }
         return;
     }
 
@@ -1278,10 +1292,11 @@ void stampy_add_image_files(StampyWindow *self, GSList *files) {
     }
 
     cancellable = g_cancellable_new();
-    task = g_task_new(self, cancellable, scan_done, self);
-    g_task_set_task_data(task, scan, scan_task_data_free);
-    g_task_run_in_thread(task, scan_thread);
-    g_object_unref(task);
+    {
+        g_autoptr(GTask) task = g_task_new(self, cancellable, scan_done, self);
+        g_task_set_task_data(task, scan, scan_task_data_free);
+        g_task_run_in_thread(task, scan_thread);
+    }
     self->scan_cancel = cancellable;
 
     if (self->progress_bar) {
@@ -1343,7 +1358,7 @@ static gboolean on_compass_drop(GtkDropTarget *target, const GValue *value, doub
                 g_free(basename);
 
                 /* Persisted, restored on next launch. */
-                {
+                if (!self->quick_mode) {
                     g_autofree char *dir_path = g_file_get_path(file);
                     stampy_config_set_string(STAMPY_CONFIG_KEY_COMPASS_FOLDER,
                                              dir_path ? dir_path : "");
@@ -1351,8 +1366,11 @@ static gboolean on_compass_drop(GtkDropTarget *target, const GValue *value, doub
 
                 stampy_show_toast(self, "Compass folder set!");
                 stampy_append_log(self, "[INFO] Compass folder updated via Drag & Drop.");
-                stampy_render_live_preview(self);
+                if (!self->quick_mode)
+                    stampy_render_live_preview(self);
                 stampy_update_clear_button_visibility(self);
+                if (self->quick_banner_cb)
+                    self->quick_banner_cb(self, self->quick_cb_data);
                 g_slist_free(files);
                 return TRUE;
             }
@@ -1488,42 +1506,45 @@ static gboolean on_json_drop(GtkDropTarget *target, const GValue *value, double 
 
 static void on_compass_folder_selected(GObject *source, GAsyncResult *res, gpointer user_data) {
     GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
-    StampyWindow *self = STAMPY_WINDOW(user_data);
+    g_autoptr(StampyWindow) self = STAMPY_WINDOW(user_data);
     g_autoptr(GFile) folder = gtk_file_dialog_select_folder_finish(dialog, res, NULL);
 
-    if (folder && self) {
-        char *basename = NULL;
+    if (folder && self && !self->disposed) {
+        g_autofree char *basename = NULL;
 
-        if (self->file_compass) g_object_unref(self->file_compass);
-        self->file_compass = g_object_ref(folder);
+        g_set_object(&self->file_compass, folder);
 
         basename = g_file_get_basename(folder);
         if (self->lbl_compass && basename) {
             gtk_label_set_text(GTK_LABEL(self->lbl_compass), basename);
         }
-        g_free(basename);
 
         /* Persisted, restored on next launch. */
-        {
+        if (!self->quick_mode) {
             g_autofree char *dir_path = g_file_get_path(folder);
             stampy_config_set_string(STAMPY_CONFIG_KEY_COMPASS_FOLDER,
                                      dir_path ? dir_path : "");
         }
 
         stampy_show_toast(self, "Compass folder selected!");
-        stampy_render_live_preview(self);
+        if (!self->quick_mode)
+            stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
+        if (self->quick_banner_cb)
+            self->quick_banner_cb(self, self->quick_cb_data);
     }
 }
 
 void stampy_open_compass_picker(StampyWindow *self) {
-    GtkFileDialog *dialog;
+    g_autoptr(GtkFileDialog) dialog = NULL;
 
     if (!self) return;
 
     dialog = gtk_file_dialog_new();
     gtk_file_dialog_set_title(dialog, "Select Compass Asset Folder");
-    gtk_file_dialog_select_folder(dialog, GTK_WINDOW(self), NULL, on_compass_folder_selected, self);
+    gtk_file_dialog_select_folder(dialog,
+                                  self->dialog_parent ? self->dialog_parent : GTK_WINDOW(self),
+                                  NULL, on_compass_folder_selected, g_object_ref(self));
 }
 
 static void on_btn_compass_clicked(GtkButton *btn, gpointer user_data) {
@@ -1533,14 +1554,13 @@ static void on_btn_compass_clicked(GtkButton *btn, gpointer user_data) {
 
 static void on_docx_file_opened(GObject *source, GAsyncResult *res, gpointer user_data) {
     GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
-    StampyWindow *self = STAMPY_WINDOW(user_data);
+    g_autoptr(StampyWindow) self = STAMPY_WINDOW(user_data);
     g_autoptr(GFile) file = gtk_file_dialog_open_finish(dialog, res, NULL);
 
-    if (file && self) {
-        char *basename = NULL;
+    if (file && self && !self->disposed) {
+        g_autofree char *basename = NULL;
 
-        if (self->file_watermark) g_object_unref(self->file_watermark);
-        self->file_watermark = g_object_ref(file);
+        g_set_object(&self->file_watermark, file);
 
         parse_docx_file(self, file);
 
@@ -1548,24 +1568,29 @@ static void on_docx_file_opened(GObject *source, GAsyncResult *res, gpointer use
         if (self->lbl_watermark && basename) {
             gtk_label_set_text(GTK_LABEL(self->lbl_watermark), basename);
         }
-        g_free(basename);
 
         stampy_show_toast(self, "Watermark file selected!");
-        stampy_render_live_preview(self);
+        if (!self->quick_mode)
+            stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
         stampy_check_missing_data(self);
-        stampy_prepare_default_export_folder(self);
+        if (!self->quick_mode)
+            stampy_prepare_default_export_folder(self);
+        if (self->quick_banner_cb)
+            self->quick_banner_cb(self, self->quick_cb_data);
     }
 }
 
 void stampy_open_watermark_picker(StampyWindow *self) {
-    GtkFileDialog *dialog;
+    g_autoptr(GtkFileDialog) dialog = NULL;
 
     if (!self) return;
 
     dialog = gtk_file_dialog_new();
     gtk_file_dialog_set_title(dialog, "Select Watermark DOCX File");
-    gtk_file_dialog_open(dialog, GTK_WINDOW(self), NULL, on_docx_file_opened, self);
+    gtk_file_dialog_open(dialog,
+                         self->dialog_parent ? self->dialog_parent : GTK_WINDOW(self),
+                         NULL, on_docx_file_opened, g_object_ref(self));
 }
 
 static void on_btn_docx_clicked(GtkButton *btn, gpointer user_data) {
@@ -1575,14 +1600,13 @@ static void on_btn_docx_clicked(GtkButton *btn, gpointer user_data) {
 
 static void on_xlsx_file_opened(GObject *source, GAsyncResult *res, gpointer user_data) {
     GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
-    StampyWindow *self = STAMPY_WINDOW(user_data);
+    g_autoptr(StampyWindow) self = STAMPY_WINDOW(user_data);
     g_autoptr(GFile) file = gtk_file_dialog_open_finish(dialog, res, NULL);
 
-    if (file && self) {
-        char *basename = NULL;
+    if (file && self && !self->disposed) {
+        g_autofree char *basename = NULL;
 
-        if (self->file_geolocation) g_object_unref(self->file_geolocation);
-        self->file_geolocation = g_object_ref(file);
+        g_set_object(&self->file_geolocation, file);
 
         parse_excel_file(self, file);
 
@@ -1590,23 +1614,27 @@ static void on_xlsx_file_opened(GObject *source, GAsyncResult *res, gpointer use
         if (self->lbl_geolocation && basename) {
             gtk_label_set_text(GTK_LABEL(self->lbl_geolocation), basename);
         }
-        g_free(basename);
 
         stampy_show_toast(self, "Geolocation file selected!");
-        stampy_render_live_preview(self);
+        if (!self->quick_mode)
+            stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
         stampy_check_missing_data(self);
+        if (self->quick_banner_cb)
+            self->quick_banner_cb(self, self->quick_cb_data);
     }
 }
 
 void stampy_open_geolocation_picker(StampyWindow *self) {
-    GtkFileDialog *dialog;
+    g_autoptr(GtkFileDialog) dialog = NULL;
 
     if (!self) return;
 
     dialog = gtk_file_dialog_new();
     gtk_file_dialog_set_title(dialog, "Select Geolocation File (XLSX, CSV)");
-    gtk_file_dialog_open(dialog, GTK_WINDOW(self), NULL, on_xlsx_file_opened, self);
+    gtk_file_dialog_open(dialog,
+                         self->dialog_parent ? self->dialog_parent : GTK_WINDOW(self),
+                         NULL, on_xlsx_file_opened, g_object_ref(self));
 }
 
 static void on_btn_xlsx_clicked(GtkButton *btn, gpointer user_data) {

@@ -669,6 +669,9 @@ void parse_docx_file(StampyWindow *self, GFile *file) {
         g_free(lower_path);
         g_free(path);
         g_free(f_base);
+        if (self->quick_banner_cb) {
+            self->quick_banner_cb(self, self->quick_cb_data);
+        }
         return;
     }
     g_free(lower_path);
@@ -704,6 +707,9 @@ void parse_docx_file(StampyWindow *self, GFile *file) {
         stampy_append_log(self, "[WARN] Failed to parse watermark data from DOCX.");
     }
     g_free(f_base);
+    if (self->quick_banner_cb) {
+        self->quick_banner_cb(self, self->quick_cb_data);
+    }
 }
 
 /* Looks up watermark text and azimuth for a (PU, No) photo via O(1) hash table. */
@@ -1121,7 +1127,7 @@ void stampy_auto_detect_companion_files(StampyWindow *self, GSList *files) {
         while ((info = g_file_enumerator_next_file(e, NULL, NULL)) != NULL) {
             const char *name = g_file_info_get_name(info);
 
-            if (name) {
+            if (name && name[0] != '.' && !g_str_has_prefix(name, "~$")) {
                 char *lower = g_utf8_strdown(name, -1);
                 GFileType child_type = g_file_info_get_file_type(info);
 
@@ -1164,7 +1170,8 @@ void stampy_auto_detect_companion_files(StampyWindow *self, GSList *files) {
 
     if (changed) {
         stampy_show_toast(self, "Companion files auto-loaded");
-        stampy_render_live_preview(self);
+        if (!self->quick_mode)
+            stampy_render_live_preview(self);
         stampy_update_clear_button_visibility(self);
         stampy_check_missing_data(self);
     }
@@ -1228,11 +1235,16 @@ void stampy_prepare_default_export_folder(StampyWindow *self) {
     char *folder_name;
     char *stamped_path;
     GFile *out;
+    gboolean auto_stamped;
 
     if (!self) return;
 
+    auto_stamped = self->has_quick_auto_stamped
+        ? self->quick_auto_stamped
+        : stampy_config_get_bool(STAMPY_CONFIG_KEY_AUTO_STAMPED_FOLDER, TRUE);
+
     /* Disabled: export falls back to the folder picker. */
-    if (!stampy_config_get_bool(STAMPY_CONFIG_KEY_AUTO_STAMPED_FOLDER, TRUE)) {
+    if (!auto_stamped) {
         g_clear_object(&self->default_export_folder);
         if (self->btn_header_export)
             gtk_widget_set_tooltip_text(self->btn_header_export, "Export Final Output");
@@ -1378,7 +1390,7 @@ void stampy_on_landscape_banner_clicked(AdwBanner *banner, gpointer user_data) {
 
     adw_toolbar_view_set_content(toolbar, content);
     adw_dialog_set_child(dialog, GTK_WIDGET(toolbar));
-    adw_dialog_present(dialog, GTK_WIDGET(self));
+    adw_dialog_present(dialog, GTK_WIDGET(self->dialog_parent ? self->dialog_parent : GTK_WINDOW(self)));
 }
 
 typedef struct {
@@ -1631,6 +1643,9 @@ void stampy_update_warning_banner(StampyWindow *self) {
 
     if (missing_count == 0 && landscape_count == 0) {
         adw_banner_set_revealed(ADW_BANNER(self->banner_missing_data), FALSE);
+        if (self->quick_banner_cb) {
+            self->quick_banner_cb(self, self->quick_cb_data);
+        }
         return;
     }
 
@@ -1678,6 +1693,9 @@ void stampy_update_warning_banner(StampyWindow *self) {
     }
 
     g_free(bmsg);
+    if (self->quick_banner_cb) {
+        self->quick_banner_cb(self, self->quick_cb_data);
+    }
 }
 
 void stampy_check_missing_data(StampyWindow *self) {
@@ -1925,7 +1943,7 @@ void stampy_on_missing_data_banner_clicked(AdwBanner *banner, gpointer user_data
 
     adw_toolbar_view_set_content(toolbar, scrolled);
     adw_dialog_set_child(dialog, GTK_WIDGET(toolbar));
-    adw_dialog_present(dialog, GTK_WIDGET(self));
+    adw_dialog_present(dialog, GTK_WIDGET(self->dialog_parent ? self->dialog_parent : GTK_WINDOW(self)));
 }
 
 void stampy_on_critical_coords_banner_clicked(AdwBanner *banner, gpointer user_data) {
@@ -1942,7 +1960,7 @@ void stampy_on_critical_coords_banner_clicked(AdwBanner *banner, gpointer user_d
     alert = adw_alert_dialog_new("Critical: Missing Coordinates", details);
     adw_alert_dialog_add_response(ADW_ALERT_DIALOG(alert), "ok", "OK");
     adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "ok");
-    adw_dialog_present(alert, GTK_WIDGET(self));
+    adw_dialog_present(alert, GTK_WIDGET(self->dialog_parent ? self->dialog_parent : GTK_WINDOW(self)));
 }
 
 void stampy_on_critical_docx_banner_clicked(AdwBanner *banner, gpointer user_data) {
@@ -1959,7 +1977,7 @@ void stampy_on_critical_docx_banner_clicked(AdwBanner *banner, gpointer user_dat
     alert = adw_alert_dialog_new("Missing Watermark Data", details);
     adw_alert_dialog_add_response(ADW_ALERT_DIALOG(alert), "ok", "OK");
     adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "ok");
-    adw_dialog_present(alert, GTK_WIDGET(self));
+    adw_dialog_present(alert, GTK_WIDGET(self->dialog_parent ? self->dialog_parent : GTK_WINDOW(self)));
 }
 
 /* Landscape scan runs off the main thread: adding 20k photos must not block
@@ -2194,23 +2212,17 @@ static void landscape_scan_thread(GTask *task, gpointer source, gpointer task_da
 static void landscape_scan_done(GObject *source, GAsyncResult *res, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(source);
     guint generation = GPOINTER_TO_UINT(user_data);
-    GPtrArray *names;
-    GError *error = NULL;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GPtrArray) names = g_task_propagate_pointer(G_TASK(res), &error);
 
-    names = g_task_propagate_pointer(G_TASK(res), &error);
-    if (error) {
-        g_clear_error(&error);
-        return;
-    }
-    if (!names) return;
+    if (error || !names) return;
 
-    if (!self || generation != self->landscape_generation) {
-        g_ptr_array_unref(names);
+    if (!self || self->disposed || generation != self->landscape_generation) {
         return;
     }
 
     if (self->horizontal_photos) g_ptr_array_unref(self->horizontal_photos);
-    self->horizontal_photos = names;
+    self->horizontal_photos = g_steal_pointer(&names);
 
     stampy_update_warning_banner(self);
 }
@@ -2218,9 +2230,9 @@ static void landscape_scan_done(GObject *source, GAsyncResult *res, gpointer use
 /* Starts (or restarts) the background landscape scan. */
 void stampy_check_horizontal_photos(StampyWindow *self) {
     LandscapeScanData *scan;
-    GTask *task;
+    g_autoptr(GTask) task = NULL;
     GCancellable *cancellable;
-    GPtrArray *files;
+    g_autoptr(GPtrArray) files = NULL;
     guint i;
 
     if (!self || !self->banner_missing_data) return;
@@ -2250,29 +2262,27 @@ void stampy_check_horizontal_photos(StampyWindow *self) {
     }
 
     scan = g_new0(LandscapeScanData, 1);
-    scan->files = files;
+    scan->files = g_steal_pointer(&files);
     cancellable = g_cancellable_new();
     task = g_task_new(self, cancellable, landscape_scan_done,
                       GUINT_TO_POINTER(self->landscape_generation));
     g_task_set_task_data(task, scan, landscape_scan_data_free);
     g_task_run_in_thread(task, landscape_scan_thread);
-    g_object_unref(task);
     self->landscape_cancel = cancellable;
 }
 
 /* Async image picker. */
 static void on_images_opened(GObject *source, GAsyncResult *res, gpointer user_data) {
     GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
-    StampyWindow *self = STAMPY_WINDOW(user_data);
-    GError *error = NULL;
-    GListModel *files = gtk_file_dialog_open_multiple_finish(dialog, res, &error);
+    g_autoptr(StampyWindow) self = STAMPY_WINDOW(user_data);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GListModel) files = gtk_file_dialog_open_multiple_finish(dialog, res, &error);
 
-    if (error) {
-        g_clear_error(&error);
+    if (error || !files || !self || self->disposed) {
         return;
     }
 
-    if (files && self) {
+    {
         guint n_items = g_list_model_get_n_items(files);
         GSList *file_list = NULL;
 
@@ -2280,7 +2290,6 @@ static void on_images_opened(GObject *source, GAsyncResult *res, gpointer user_d
             GFile *file = g_list_model_get_item(files, i);
             if (file) file_list = g_slist_prepend(file_list, file);
         }
-        g_object_unref(files);
 
         if (file_list) {
             file_list = g_slist_reverse(file_list);
@@ -2292,9 +2301,9 @@ static void on_images_opened(GObject *source, GAsyncResult *res, gpointer user_d
 
 /* Opens the image picker dialog. */
 void stampy_open_image_picker(StampyWindow *self) {
-    GtkFileDialog *dialog;
-    GtkFileFilter *filter;
-    GListStore *filters;
+    g_autoptr(GtkFileDialog) dialog = NULL;
+    g_autoptr(GtkFileFilter) filter = NULL;
+    g_autoptr(GListStore) filters = NULL;
 
     if (!self) return;
 
@@ -2308,12 +2317,12 @@ void stampy_open_image_picker(StampyWindow *self) {
 
     filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
     g_list_store_append(filters, filter);
-    g_object_unref(filter);
 
     gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
-    g_object_unref(filters);
 
-    gtk_file_dialog_open_multiple(dialog, GTK_WINDOW(self), NULL, on_images_opened, self);
+    gtk_file_dialog_open_multiple(dialog,
+                                  self->dialog_parent ? self->dialog_parent : GTK_WINDOW(self),
+                                  NULL, on_images_opened, g_object_ref(self));
 }
 
 /* Handles the win.add-images action from shortcuts and context menu. */

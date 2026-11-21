@@ -285,7 +285,7 @@ stampy_config_get_export_threads (void)
 
   if (stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_USE_ALL_CORES, TRUE))
     {
-      if (stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_OVERSUBSCRIBE, TRUE))
+      if (stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_OVERSUBSCRIBE, FALSE))
         return n_cpus * 2;
       return n_cpus;
     }

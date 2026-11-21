@@ -5,7 +5,12 @@
 
 void stampy_show_toast(StampyWindow *self, const char *title) {
     AdwToast *toast;
-    if (!self || !self->toast_overlay) return;
+    if (!self || !title) return;
+    if (self->quick_toast_cb) {
+        self->quick_toast_cb(self, title, self->quick_cb_data);
+        return;
+    }
+    if (!self->toast_overlay) return;
     toast = adw_toast_new(title);
     adw_toast_overlay_add_toast(ADW_TOAST_OVERLAY(self->toast_overlay), toast);
 }
@@ -17,7 +22,9 @@ void stampy_set_progress(StampyWindow *self, double fraction, gboolean visible) 
 }
 
 static void apply_custom_css(void) {
-    GtkCssProvider *provider = gtk_css_provider_new();
+    static gboolean css_applied = FALSE;
+    GdkDisplay *display;
+    GtkCssProvider *provider;
     const char *css =
         "progressbar > trough {"
         "  min-height: 4px;"
@@ -48,31 +55,29 @@ static void apply_custom_css(void) {
         "  border-radius: 999px;"
         "  font-size: 0.85em;"
         "  font-weight: 600;"
-        "  background-color: #fde8e8;"
-        "  color: #c01c28;"
-        "}"
-        "@media (prefers-color-scheme: dark) {"
-        "  .missing-badge, label.missing-badge {"
-        "    background-color: rgba(192, 28, 40, 0.25);"
-        "    color: #ff7b82;"
-        "  }"
+        "  background-color: alpha(@error_color, 0.18);"
+        "  color: @error_color;"
         "}";
 
+    if (css_applied) return;
+    display = gdk_display_get_default();
+    if (!display) return;
+
+    provider = gtk_css_provider_new();
     gtk_css_provider_load_from_string(provider, css);
     gtk_style_context_add_provider_for_display(
-        gdk_display_get_default(),
+        display,
         GTK_STYLE_PROVIDER(provider),
         GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
     );
     g_object_unref(provider);
+    css_applied = TRUE;
 }
 
 static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
     StampyWindow *self = STAMPY_WINDOW(window);
     (void)user_data;
 
-    stampy_cancel_export(self);
-
     if (self->landscape_cancel) {
         g_cancellable_cancel(self->landscape_cancel);
         g_clear_object(&self->landscape_cancel);
@@ -98,18 +103,101 @@ static gboolean on_window_close_request(GtkWindow *window, gpointer user_data) {
         self->save_state_timeout_id = 0;
     }
 
-    stampy_save_last_state(self);
+    if (!self->quick_mode) {
+        stampy_save_last_state(self);
+    }
+
+    if (self->export_active) {
+        self->close_after_export = TRUE;
+        stampy_cancel_export(self);
+        gtk_widget_set_visible(GTK_WIDGET(self), FALSE);
+        return TRUE;
+    }
+
     return FALSE;
 }
 
+enum {
+    PROP_0,
+    PROP_QUICK_MODE,
+    N_PROPS
+};
+
+static GParamSpec *obj_properties[N_PROPS] = { NULL, };
+
 G_DEFINE_TYPE(StampyWindow, stampy_window, ADW_TYPE_APPLICATION_WINDOW)
+
+static void stampy_window_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec) {
+    StampyWindow *self = STAMPY_WINDOW(object);
+
+    switch (prop_id) {
+    case PROP_QUICK_MODE:
+        self->quick_mode = g_value_get_boolean(value);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+        break;
+    }
+}
+
+static void stampy_window_get_property(GObject *object, guint prop_id, GValue *value, GParamSpec *pspec) {
+    StampyWindow *self = STAMPY_WINDOW(object);
+
+    switch (prop_id) {
+    case PROP_QUICK_MODE:
+        g_value_set_boolean(value, self->quick_mode);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+        break;
+    }
+}
+
+static void stampy_window_constructed(GObject *object) {
+    StampyWindow *self = STAMPY_WINDOW(object);
+
+    G_OBJECT_CLASS(stampy_window_parent_class)->constructed(object);
+
+    /* Load presets and last state after construct-only properties are set;
+       saves stay suppressed until done. */
+    stampy_scan_and_populate_presets(self);
+    stampy_load_last_state(self);
+    self->loading_state = FALSE;
+}
 
 static void stampy_window_dispose(GObject *object) {
     StampyWindow *self = STAMPY_WINDOW(object);
 
+    if (self->save_state_timeout_id > 0) {
+        g_source_remove(self->save_state_timeout_id);
+        self->save_state_timeout_id = 0;
+        if (!self->quick_mode && !self->disposed) {
+            stampy_save_last_state(self);
+        }
+    }
+
+    self->disposed = TRUE;
+    self->scan_generation++;
+    self->landscape_generation++;
+    self->populate_generation++;
+
+    self->dialog_parent = NULL;
+    self->active_hover_popover = NULL;
+    self->quick_scan_cb = NULL;
+    self->quick_banner_cb = NULL;
+    self->quick_progress_cb = NULL;
+    self->quick_finish_cb = NULL;
+    self->quick_toast_cb = NULL;
+    self->quick_cb_data = NULL;
+
     if (self->scan_cancel) {
         g_cancellable_cancel(self->scan_cancel);
         g_clear_object(&self->scan_cancel);
+    }
+
+    if (self->landscape_cancel) {
+        g_cancellable_cancel(self->landscape_cancel);
+        g_clear_object(&self->landscape_cancel);
     }
 
     if (self->scan_pulse_id > 0) {
@@ -122,125 +210,69 @@ static void stampy_window_dispose(GObject *object) {
         self->populate_source_id = 0;
     }
 
-    if (self->geo_table) {
-        g_hash_table_destroy(self->geo_table);
-        self->geo_table = NULL;
-    }
+    stampy_cancel_export(self);
 
-    if (self->image_files) {
-        g_ptr_array_unref(self->image_files);
-        self->image_files = NULL;
+    g_clear_object(&self->file_compass);
+    if (!self->export_active) {
+        g_clear_object(&self->file_watermark);
+        g_clear_object(&self->file_geolocation);
     }
-
-    if (self->file_compass) {
-        g_object_unref(self->file_compass);
-        self->file_compass = NULL;
-    }
-
-    if (self->file_watermark) {
-        g_object_unref(self->file_watermark);
-        self->file_watermark = NULL;
-    }
-
-    if (self->file_geolocation) {
-        g_object_unref(self->file_geolocation);
-        self->file_geolocation = NULL;
-    }
-
-    if (self->save_state_timeout_id > 0) {
-        g_source_remove(self->save_state_timeout_id);
-        self->save_state_timeout_id = 0;
-        stampy_save_last_state(self);
-    }
-
-    if (self->preview_cached_pixbuf) {
-        g_object_unref(self->preview_cached_pixbuf);
-        self->preview_cached_pixbuf = NULL;
-    }
-
-    if (self->preview_cached_path) {
-        g_free(self->preview_cached_path);
-        self->preview_cached_path = NULL;
-    }
-
-    if (self->landscape_cancel) {
-        g_cancellable_cancel(self->landscape_cancel);
-        g_clear_object(&self->landscape_cancel);
-    }
-
-    if (self->horizontal_photos) {
-        g_ptr_array_unref(self->horizontal_photos);
-        self->horizontal_photos = NULL;
-    }
-
-    if (self->missing_data_items) {
-        g_ptr_array_unref(self->missing_data_items);
-        self->missing_data_items = NULL;
-    }
-
-    if (self->critical_coords_details) {
-        g_free(self->critical_coords_details);
-        self->critical_coords_details = NULL;
-    }
-
-    if (self->critical_docx_details) {
-        g_free(self->critical_docx_details);
-        self->critical_docx_details = NULL;
-    }
-
-    if (self->docx_cached_lines) {
-        g_strfreev(self->docx_cached_lines);
-        self->docx_cached_lines = NULL;
-    }
-
-    if (self->docx_table) {
-        g_hash_table_destroy(self->docx_table);
-        self->docx_table = NULL;
-    }
-
-    if (self->docx_cached_path) {
-        g_free(self->docx_cached_path);
-        self->docx_cached_path = NULL;
-    }
-
-    if (self->default_export_folder) {
-        g_object_unref(self->default_export_folder);
-        self->default_export_folder = NULL;
-    }
-
-    g_clear_pointer(&self->pu_folders, g_ptr_array_unref);
-    g_clear_pointer(&self->selected_pu_folder, g_free);
-
-    if (self->import_root) {
-        g_object_unref(self->import_root);
-        self->import_root = NULL;
-    }
-
-    if (self->scan_cache_sources) {
-        g_ptr_array_unref(self->scan_cache_sources);
-        self->scan_cache_sources = NULL;
-    }
-
-    if (self->scan_cache_dirs) {
-        g_hash_table_unref(self->scan_cache_dirs);
-        self->scan_cache_dirs = NULL;
-    }
+    g_clear_object(&self->preview_cached_pixbuf);
+    g_clear_object(&self->default_export_folder);
+    g_clear_object(&self->import_root);
 
     if (self->listbox_popover) {
         gtk_widget_unparent(self->listbox_popover);
         self->listbox_popover = NULL;
     }
 
-    stampy_cancel_export(self);
+    gtk_widget_dispose_template(GTK_WIDGET(self), STAMPY_TYPE_WINDOW);
 
     G_OBJECT_CLASS(stampy_window_parent_class)->dispose(object);
+}
+
+static void stampy_window_finalize(GObject *object) {
+    StampyWindow *self = STAMPY_WINDOW(object);
+
+    g_clear_object(&self->file_watermark);
+    g_clear_object(&self->file_geolocation);
+
+    g_clear_pointer(&self->geo_table, g_hash_table_destroy);
+    g_clear_pointer(&self->image_files, g_ptr_array_unref);
+    g_clear_pointer(&self->preview_cached_path, g_free);
+    g_clear_pointer(&self->horizontal_photos, g_ptr_array_unref);
+    g_clear_pointer(&self->missing_data_items, g_ptr_array_unref);
+    g_clear_pointer(&self->critical_coords_details, g_free);
+    g_clear_pointer(&self->critical_docx_details, g_free);
+    g_clear_pointer(&self->docx_cached_lines, g_strfreev);
+    g_clear_pointer(&self->docx_table, g_hash_table_destroy);
+    g_clear_pointer(&self->docx_cached_path, g_free);
+    g_clear_pointer(&self->pu_folders, g_ptr_array_unref);
+    g_clear_pointer(&self->selected_pu_folder, g_free);
+    g_clear_pointer(&self->scan_cache_sources, g_ptr_array_unref);
+    g_clear_pointer(&self->scan_cache_dirs, g_hash_table_unref);
+    g_clear_pointer(&self->quick_meta.meta_strip_text, g_free);
+
+    G_OBJECT_CLASS(stampy_window_parent_class)->finalize(object);
 }
 
 static void stampy_window_class_init(StampyWindowClass *klass) {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
     GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
 
+    object_class->set_property = stampy_window_set_property;
+    object_class->get_property = stampy_window_get_property;
+    object_class->constructed = stampy_window_constructed;
     object_class->dispose = stampy_window_dispose;
+    object_class->finalize = stampy_window_finalize;
+
+    obj_properties[PROP_QUICK_MODE] = g_param_spec_boolean(
+        "quick-mode",
+        "Quick Mode",
+        "Run as an unpresented Quick-Stamp controller",
+        FALSE,
+        G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
+    g_object_class_install_properties(object_class, N_PROPS, obj_properties);
 
     gtk_widget_class_set_template_from_resource(widget_class, "/com/cobaltty/stampy/stampy-window.ui");
 
@@ -409,7 +441,8 @@ static void stampy_on_compass_lock_toggled(GtkToggleButton *btn, gpointer user_d
     if (btn)
         gtk_button_set_icon_name(GTK_BUTTON(btn), self->compass_locked ? "padlock2-symbolic" : "padlock-open-symbolic");
     /* Persisted, restored on next launch. */
-    stampy_config_set_bool(STAMPY_CONFIG_KEY_COMPASS_LOCKED, self->compass_locked);
+    if (!self->quick_mode && !self->loading_state)
+        stampy_config_set_bool(STAMPY_CONFIG_KEY_COMPASS_LOCKED, self->compass_locked);
 }
 
 void stampy_toggle_compass_lock(StampyWindow *self) {
@@ -498,13 +531,20 @@ static void stampy_window_init(StampyWindow *self) {
         g_signal_connect_swapped(click, "pressed", G_CALLBACK(stampy_play_teto), self);
         gtk_widget_add_controller(GTK_WIDGET(self->img_decoration), GTK_EVENT_CONTROLLER(click));
     }
-
-    /* Load presets and last state; saves stay suppressed until done. */
-    stampy_scan_and_populate_presets(self);
-    stampy_load_last_state(self);
-    self->loading_state = FALSE;
 }
 
 StampyWindow *stampy_window_new(GtkApplication *app) {
     return g_object_new(STAMPY_TYPE_WINDOW, "application", app, NULL);
+}
+
+StampyWindow *stampy_window_new_quick(GtkApplication *app) {
+    return g_object_new(STAMPY_TYPE_WINDOW,
+                        "application", app,
+                        "quick-mode", TRUE,
+                        NULL);
+}
+
+gboolean stampy_window_is_quick_mode(StampyWindow *self) {
+    g_return_val_if_fail(STAMPY_IS_WINDOW(self), FALSE);
+    return self->quick_mode;
 }

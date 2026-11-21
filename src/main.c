@@ -22,6 +22,7 @@
 
 #include <glib/gi18n.h>
 #include <gst/gst.h>
+#include <gexiv2/gexiv2.h>
 
 #include "stampy-application.h"
 
@@ -40,9 +41,10 @@ main (int   argc,
     bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
     textdomain (GETTEXT_PACKAGE);
 
+    gexiv2_initialize ();
     gst_init (&argc, &argv);
 
-    app = stampy_application_new ("com.cobaltty.stampy", G_APPLICATION_DEFAULT_FLAGS);
+    app = stampy_application_new ("com.cobaltty.stampy", G_APPLICATION_HANDLES_OPEN);
     ret = g_application_run (G_APPLICATION (app), argc, argv);
 
     return ret;

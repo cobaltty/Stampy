@@ -4,5 +4,7 @@ data/com.cobaltty.stampy.desktop.in
 data/com.cobaltty.stampy.metainfo.xml.in
 data/com.cobaltty.stampy.gschema.xml
 src/main.c
+src/stampy-quick-window.c
+src/stampy-quick-window.ui
 src/stampy-window.c
 src/stampy-window.ui

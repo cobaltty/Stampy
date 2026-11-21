@@ -22,6 +22,7 @@ stampy_sources = [
   'main.c',
   'stampy-application.c',
   'stampy-window.c',
+  'stampy-quick-window.c',
   'stampy-utils.c',
   'stampy-handlers.c',
   'stampy-file-handlers.c',

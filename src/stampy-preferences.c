@@ -296,6 +296,63 @@ on_auto_folder_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
 }
 
 static void
+on_meta_strip_text_changed (GtkEditable *editable, gpointer user_data)
+{
+  const char *text;
+  (void) user_data;
+  text = gtk_editable_get_text (editable);
+  stampy_config_set_string (STAMPY_CONFIG_KEY_META_STRIP_TEXT, text ? text : "");
+}
+
+static void
+on_timephoto_rename_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  gboolean active;
+  (void) pspec;
+  (void) user_data;
+  active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
+  stampy_config_set_bool (STAMPY_CONFIG_KEY_TIMEPHOTO_RENAME, active);
+}
+
+static void
+on_post_script_enable_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
+{
+  gboolean active;
+  GtkWidget *path_entry;
+  GtkWidget *args_entry;
+  (void) pspec;
+  (void) user_data;
+
+  active = adw_switch_row_get_active (ADW_SWITCH_ROW (object));
+  stampy_config_set_bool (STAMPY_CONFIG_KEY_POST_SCRIPT_ENABLE, active);
+
+  path_entry = GTK_WIDGET (g_object_get_data (object, "path-entry"));
+  args_entry = GTK_WIDGET (g_object_get_data (object, "args-entry"));
+  if (path_entry != NULL)
+    gtk_widget_set_sensitive (path_entry, active);
+  if (args_entry != NULL)
+    gtk_widget_set_sensitive (args_entry, active);
+}
+
+static void
+on_post_script_path_changed (GtkEditable *editable, gpointer user_data)
+{
+  const char *text;
+  (void) user_data;
+  text = gtk_editable_get_text (editable);
+  stampy_config_set_string (STAMPY_CONFIG_KEY_POST_SCRIPT_PATH, text ? text : "");
+}
+
+static void
+on_post_script_args_changed (GtkEditable *editable, gpointer user_data)
+{
+  const char *text;
+  (void) user_data;
+  text = gtk_editable_get_text (editable);
+  stampy_config_set_string (STAMPY_CONFIG_KEY_POST_SCRIPT_ARGS, text ? text : "");
+}
+
+static void
 on_meta_switch_changed (GObject *object, GParamSpec *pspec, gpointer user_data)
 {
   const char *key = (const char *) g_object_get_data (G_OBJECT (object), "config-key");
@@ -476,7 +533,7 @@ stampy_show_preferences (StampyWindow *self)
   if (n_cpus < 1)
     n_cpus = 1;
   use_all = stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_USE_ALL_CORES, TRUE);
-  use_native = stampy_config_get_bool (STAMPY_CONFIG_KEY_USE_NATIVE_METADATA, FALSE);
+  use_native = stampy_config_get_bool (STAMPY_CONFIG_KEY_USE_NATIVE_METADATA, TRUE);
   default_meta_text = stampy_config_get_bool (STAMPY_CONFIG_KEY_TITLE_EXPERIMENTAL, FALSE);
   default_meta_time = stampy_config_get_bool (STAMPY_CONFIG_KEY_XLSX_TIME_EXIF, FALSE);
 
@@ -542,7 +599,7 @@ stampy_show_preferences (StampyWindow *self)
   adw_action_row_set_subtitle (ADW_ACTION_ROW (oversubscribe_switch),
                                "Runs 2 worker threads per core to keep CPU busy during storage I/O wait.");
   adw_switch_row_set_active (oversubscribe_switch,
-      stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_OVERSUBSCRIBE, TRUE));
+      stampy_config_get_bool (STAMPY_CONFIG_KEY_EXPORT_OVERSUBSCRIBE, FALSE));
   g_object_bind_property (cores_switch, "active", oversubscribe_switch, "sensitive", G_BINDING_SYNC_CREATE);
   g_signal_connect (oversubscribe_switch, "notify::active",
                     G_CALLBACK (on_oversubscribe_changed), NULL);
@@ -560,7 +617,7 @@ stampy_show_preferences (StampyWindow *self)
   adw_action_row_set_subtitle (ADW_ACTION_ROW (batch_exiftool_switch),
                                "Execute ExifTool once for the entire batch. Much faster for 1000+ photos.");
   adw_switch_row_set_active (batch_exiftool_switch,
-      stampy_config_get_bool (STAMPY_CONFIG_KEY_BATCH_EXIFTOOL, FALSE));
+      stampy_config_get_bool (STAMPY_CONFIG_KEY_BATCH_EXIFTOOL, TRUE));
   gtk_widget_set_sensitive (GTK_WIDGET (batch_exiftool_switch), !use_native);
   g_signal_connect (batch_exiftool_switch, "notify::active",
                     G_CALLBACK (on_batch_exiftool_changed), NULL);
@@ -706,6 +763,24 @@ stampy_show_preferences (StampyWindow *self)
                        STAMPY_CONFIG_KEY_META_TIME,
                        default_meta_time);
 
+  /* Strip words from Title and Subject entry row */
+  {
+    AdwEntryRow *strip_entry = ADW_ENTRY_ROW (adw_entry_row_new ());
+    char *curr_strip;
+
+    adw_preferences_row_set_title (ADW_PREFERENCES_ROW (strip_entry),
+        "Strip words from Title and Subject");
+    curr_strip = stampy_config_get_string (STAMPY_CONFIG_KEY_META_STRIP_TEXT, "");
+    if (curr_strip != NULL)
+      {
+        gtk_editable_set_text (GTK_EDITABLE (strip_entry), curr_strip);
+        g_free (curr_strip);
+      }
+    g_signal_connect (strip_entry, "changed",
+                      G_CALLBACK (on_meta_strip_text_changed), NULL);
+    adw_preferences_group_add (exp_group, GTK_WIDGET (strip_entry));
+  }
+
   /* Metadata Stripping group card */
   {
     AdwPreferencesGroup *strip_group;
@@ -811,6 +886,77 @@ stampy_show_preferences (StampyWindow *self)
   g_signal_connect (auto_folder_switch, "notify::active",
                     G_CALLBACK (on_auto_folder_changed), self);
   adw_preferences_group_add (extra_group, GTK_WIDGET (auto_folder_switch));
+
+  /* TimePhoto rename switch */
+  {
+    AdwSwitchRow *timephoto_switch = ADW_SWITCH_ROW (adw_switch_row_new ());
+    adw_preferences_row_set_title (ADW_PREFERENCES_ROW (timephoto_switch),
+        "TimePhoto filename format");
+    adw_action_row_set_subtitle (ADW_ACTION_ROW (timephoto_switch),
+        "Rename exported photos to TimePhoto_YYYYMMDD_HHMMSS.jpg");
+    adw_switch_row_set_active (timephoto_switch,
+        stampy_config_get_bool (STAMPY_CONFIG_KEY_TIMEPHOTO_RENAME, FALSE));
+    g_signal_connect (timephoto_switch, "notify::active",
+                      G_CALLBACK (on_timephoto_rename_changed), NULL);
+    adw_preferences_group_add (extra_group, GTK_WIDGET (timephoto_switch));
+  }
+
+  /* Post-Export Automation group card */
+  {
+    AdwPreferencesGroup *hook_group;
+    AdwSwitchRow *hook_switch;
+    AdwEntryRow *path_entry;
+    AdwEntryRow *args_entry;
+    gboolean hook_active;
+    char *curr_path;
+    char *curr_args;
+
+    hook_group = ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
+    adw_preferences_group_set_title (hook_group, "Post-Export Automation");
+    adw_preferences_group_set_description (hook_group,
+        "Execute an external shell or Python script after export finishes.");
+    adw_preferences_page_add (page, hook_group);
+
+    hook_switch = ADW_SWITCH_ROW (adw_switch_row_new ());
+    adw_preferences_row_set_title (ADW_PREFERENCES_ROW (hook_switch),
+        "Run script after export");
+    adw_action_row_set_subtitle (ADW_ACTION_ROW (hook_switch),
+        "Passes the export folder path as $1 to the script");
+    hook_active = stampy_config_get_bool (STAMPY_CONFIG_KEY_POST_SCRIPT_ENABLE, FALSE);
+    adw_switch_row_set_active (hook_switch, hook_active);
+    adw_preferences_group_add (hook_group, GTK_WIDGET (hook_switch));
+
+    path_entry = ADW_ENTRY_ROW (adw_entry_row_new ());
+    adw_preferences_row_set_title (ADW_PREFERENCES_ROW (path_entry), "Script path");
+    curr_path = stampy_config_get_string (STAMPY_CONFIG_KEY_POST_SCRIPT_PATH, "");
+    if (curr_path != NULL)
+      {
+        gtk_editable_set_text (GTK_EDITABLE (path_entry), curr_path);
+        g_free (curr_path);
+      }
+    gtk_widget_set_sensitive (GTK_WIDGET (path_entry), hook_active);
+    g_signal_connect (path_entry, "changed",
+                      G_CALLBACK (on_post_script_path_changed), NULL);
+    adw_preferences_group_add (hook_group, GTK_WIDGET (path_entry));
+
+    args_entry = ADW_ENTRY_ROW (adw_entry_row_new ());
+    adw_preferences_row_set_title (ADW_PREFERENCES_ROW (args_entry), "Script arguments");
+    curr_args = stampy_config_get_string (STAMPY_CONFIG_KEY_POST_SCRIPT_ARGS, "");
+    if (curr_args != NULL)
+      {
+        gtk_editable_set_text (GTK_EDITABLE (args_entry), curr_args);
+        g_free (curr_args);
+      }
+    gtk_widget_set_sensitive (GTK_WIDGET (args_entry), hook_active);
+    g_signal_connect (args_entry, "changed",
+                      G_CALLBACK (on_post_script_args_changed), NULL);
+    adw_preferences_group_add (hook_group, GTK_WIDGET (args_entry));
+
+    g_object_set_data (G_OBJECT (hook_switch), "path-entry", path_entry);
+    g_object_set_data (G_OBJECT (hook_switch), "args-entry", args_entry);
+    g_signal_connect (hook_switch, "notify::active",
+                      G_CALLBACK (on_post_script_enable_changed), NULL);
+  }
 
   /* Programmatic dialogs need no close-handler unref (unlike the
    * builder-based shortcuts dialog); unref'ing here double-frees. */

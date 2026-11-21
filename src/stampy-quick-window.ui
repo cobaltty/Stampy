@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<interface>
+  <requires lib="gtk" version="4.0"/>
+  <requires lib="libadwaita" version="1.5"/>
+  <template class="StampyQuickWindow" parent="AdwApplicationWindow">
+    <property name="title">Quick Stamp</property>
+    <property name="default-width">480</property>
+    <property name="resizable">false</property>
+    <child>
+      <object class="AdwToastOverlay" id="toast_overlay">
+        <child>
+          <object class="AdwToolbarView">
+            <child type="top">
+              <object class="AdwHeaderBar">
+                <property name="show-start-title-buttons">false</property>
+                <property name="show-end-title-buttons">false</property>
+                <child type="start">
+                  <object class="GtkButton" id="btn_cancel">
+                    <property name="label">_Cancel</property>
+                    <property name="use-underline">true</property>
+                  </object>
+                </child>
+                <child type="end">
+                  <object class="GtkButton" id="btn_export">
+                    <property name="label">_Export</property>
+                    <property name="use-underline">true</property>
+                    <property name="sensitive">false</property>
+                    <style>
+                      <class name="suggested-action"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child type="top">
+              <object class="GtkProgressBar" id="progress_bar">
+                <property name="visible">false</property>
+                <style>
+                  <class name="osd"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">vertical</property>
+                <child>
+                  <object class="AdwBanner" id="banner_warning">
+                    <property name="revealed">false</property>
+                    <property name="button-label">See Details</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwClamp">
+                    <property name="maximum-size">600</property>
+                    <property name="tightening-threshold">400</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">vertical</property>
+                        <property name="spacing">12</property>
+                        <property name="margin-top">18</property>
+                        <property name="margin-bottom">18</property>
+                        <property name="margin-start">12</property>
+                        <property name="margin-end">12</property>
+
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <child>
+                              <object class="AdwActionRow" id="row_source">
+                                <property name="title">Loading…</property>
+                                <property name="subtitle">Scanning for photos…</property>
+                                <property name="subtitle-lines">1</property>
+                                <child type="prefix">
+                                  <object class="GtkImage" id="img_source">
+                                    <property name="icon-name">folder-symbolic</property>
+                                  </object>
+                                </child>
+                                <child type="suffix">
+                                  <object class="GtkSpinner" id="spinner_scan">
+                                    <property name="spinning">true</property>
+                                    <property name="valign">center</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <child>
+                              <object class="AdwExpanderRow" id="row_options">
+                                <property name="title">Options</property>
+                                <property name="subtitle">Default Preset</property>
+                                <property name="subtitle-lines">1</property>
+                                <child>
+                                  <object class="AdwComboRow" id="row_preset">
+                                    <property name="title">Preset</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwSwitchRow" id="row_auto_stamped">
+                                    <property name="title">Auto "_stamped" Folder</property>
+                                    <property name="subtitle">Turn off to choose a destination folder</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow" id="row_compass">
+                                    <property name="title">Compass Folder</property>
+                                    <property name="subtitle">Not set</property>
+                                    <property name="subtitle-lines">1</property>
+                                    <property name="activatable-widget">btn_pick_compass</property>
+                                    <child type="suffix">
+                                      <object class="GtkButton" id="btn_pick_compass">
+                                        <property name="icon-name">folder-open-symbolic</property>
+                                        <property name="tooltip-text">Select compass folder</property>
+                                        <property name="valign">center</property>
+                                        <style>
+                                          <class name="flat"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow" id="row_watermark">
+                                    <property name="title">Watermark (.docx)</property>
+                                    <property name="subtitle">Missing</property>
+                                    <property name="subtitle-lines">1</property>
+                                    <property name="activatable-widget">btn_pick_watermark</property>
+                                    <child type="suffix">
+                                      <object class="GtkButton" id="btn_pick_watermark">
+                                        <property name="icon-name">document-open-symbolic</property>
+                                        <property name="tooltip-text">Select watermark DOCX file</property>
+                                        <property name="valign">center</property>
+                                        <style>
+                                          <class name="flat"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow" id="row_geolocation">
+                                    <property name="title">Geolocation (.xlsx)</property>
+                                    <property name="subtitle">Missing</property>
+                                    <property name="subtitle-lines">1</property>
+                                    <property name="activatable-widget">btn_pick_geolocation</property>
+                                    <child type="suffix">
+                                      <object class="GtkButton" id="btn_pick_geolocation">
+                                        <property name="icon-name">document-open-symbolic</property>
+                                        <property name="tooltip-text">Select geolocation file</property>
+                                        <property name="valign">center</property>
+                                        <style>
+                                          <class name="flat"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>
