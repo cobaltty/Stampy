@@ -45,110 +45,15 @@
   </screenshots>
 
   <releases>
-    <release version="1.1120.beta" date="2026-10-25">
+    <release version="1.0" date="2026-11-21">
       <description>
-        <p>Granular metadata injection toggles, CSV geolocation support, and dynamic validation.</p>
+        <p>First stable release featuring Quick-Stamp file-manager integration, preset compass sync, metadata stripping, and post-export automation.</p>
         <ul>
-          <li>Added fine-grained toggles for Title, Subject, Tags, Date, and Time metadata injection.</li>
-          <li>Added Date source switcher supporting Auto, Geolocation, and Watermark.</li>
-          <li>Added support for loading CSV geolocation files and parsing various date formats.</li>
-          <li>Added dynamic missing-data validation tailored to Regular and PU folder structure modes.</li>
-          <li>Redesigned Expected Data Summary with concise status badges and clean rows.</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.1020.beta" date="2026-10-23">
-      <description>
-        <p>PU composite key support, per-folder view, and performance improvements.</p>
-        <ul>
-          <li>Added composite (PU, No) metadata matching for Excel and DOCX.</li>
-          <li>Added PU folder selector dropdown in the file viewer sidebar.</li>
-          <li>Preserve subfolder structures on export.</li>
-          <li>Optimized DOCX lookup with in-memory hash index.</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.921.beta" date="2026-10-20">
-      <description>
-        <p>Increments support, quality-of-life improvements, and bug fixes.</p>
-        <ul>
-          <li>Added increments support.</li>
-          <li>Quality-of-life improvements across the app.</li>
-          <li>Various bug fixes.</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.833.beta" date="2026-10-19">
-      <description>
-        <p>Bug fixes and improvements.</p>
-      </description>
-    </release>
-    <release version="1.832.beta" date="2026-10-19">
-      <description>
-        <p>Import helpers, a landscape warning, automatic export folders, and live progress.</p>
-        <p>Changes:</p>
-        <ul>
-          <li>Dropping a folder auto-loads a .docx watermark and an .xlsx geolocation file found inside it</li>
-          <li>Warning banner for photos taken in landscape orientation with a "See more" file list; toggle in Additional Settings (on by default)</li>
-          <li>Automatic "&lt;folder&gt;_stamped" export folder created next to the imported images; toggle in Additional Settings (on by default)</li>
-          <li>Folder scans run in the background; the title bar shows "Scanning…" with a pulsing progress bar, and exports show live "Exporting… N%" progress</li>
-          <li>Export progress is live: the terminal updates a single line for every photo instead of every ten, and the progress bar animates smoothly</li>
-          <li>New Additional Settings category in Preferences</li>
-          <li>Faster previews and UI with a cached preview pixbuf, debounced state saves, and a cached compass image set</li>
-          <li>2x thread oversubscription keeps CPUs busy during storage I/O wait (optional)</li>
-          <li>Removed the "-@" hint from the Batch ExifTool preference title</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.720.beta" date="2026-10-18">
-      <description>
-        <p>Metadata engine options and EXIF date/time correctness.</p>
-        <p>Changes:</p>
-        <ul>
-          <li>New preference: choose the metadata engine — per-image ExifTool, single-call ExifTool, batched ExifTool, or the native in-memory gexiv2 engine</li>
-          <li>DOCX dates are combined with the XLSX time column into a full EXIF date/time; dates without a time default to 00:00:00 so tags stay valid</li>
-          <li>IPTC DateCreated written as YYYY-MM-DD; GPS date/time written in the correct formats</li>
-          <li>Faster filename-to-row matching: IDs are extracted from filenames with plot prefixes (for example, "PU.245 (11).jpg" or "PU.245_11.jpg" both resolve to 11)</li>
-        </ul>
-        <p>Fixes:</p>
-        <ul>
-          <li>Config directory is created on first launch; missing or empty settings files no longer trigger warnings</li>
-          <li>Fixed Excel header parsing where shared-string headers were not resolved, leaving geolocation/time data unmapped</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.6.010.beta" date="2026-10-16">
-      <description>
-        <p>Experimental metadata injection to EXIF.</p>
-        <p>Changes:</p>
-        <ul>
-          <li>New experimental toggle: inject DOCX watermark text as EXIF Title/Description (XMP Title/Description, XPTitle, ImageDescription)</li>
-          <li>New experimental toggle: inject XLSX clock/jam time column as EXIF DateTimeOriginal/DateTimeDigitized/DateTime</li>
-          <li>Dynamic XLSX column mapping via header row scanning (no hardcoded column letters)</li>
-          <li>DOCX date extraction combined with XLSX time into a full EXIF date/time ("Kamis, 23 Juli 2026" + 10:17:57 → "2026:07:23 10:17:57"); dates without a time default to 00:00:00 so EXIF tags stay valid</li>
-          <li>IPTC DateCreated written in YYYY-MM-DD format; GPS date/time written in the correct date/time formats</li>
-        </ul>
-        <p>Fixes:</p>
-        <ul>
-          <li>Config directory is created on first launch; missing or empty settings files no longer trigger warnings</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.5.000.beta" date="2026-10-16">
-      <description>
-        <p>Preferences, persistent settings, and export thread controls.</p>
-        <p>Changes:</p>
-        <ul>
-          <li>New Preferences dialog in the hamburger menu (Ctrl+,) with export settings</li>
-          <li>JPEG compress quality with slider and typeable value</li>
-          <li>Preferences, compass folder and lock, and the selected preset are remembered across restarts</li>
-          <li>Export thread controls: use all CPU cores automatically or set a manual worker count</li>
-        </ul>
-        <p>Fixes:</p>
-        <ul>
-          <li>Fixed a crash when closing the Preferences dialog</li>
-          <li>Fixed a crash on startup in the settings loader</li>
-          <li>Fixed settings and the selected preset being reset on startup</li>
+          <li>Added Quick-Stamp confirmation window when opening folders or images from the file manager ("Open With").</li>
+          <li>Synced compass folder paths with presets and added an Auto "_stamped" Folder toggle in Quick-Stamp Options.</li>
+          <li>Added metadata stripping controls, word stripping for Title/Subject, and TimePhoto filename renaming.</li>
+          <li>Added post-export automation script hooks and auto-incrementing "_stamped" export folders.</li>
+          <li>Added DOCX watermark validation warnings, XLSX date parsing fixes, and memory-safety improvements.</li>
         </ul>
       </description>
     </release>

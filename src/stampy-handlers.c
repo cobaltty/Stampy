@@ -1205,7 +1205,7 @@ static void on_clear_all_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 /* Shows the "What's New" dialog. */
-#define STAMPY_RELEASE_DATE "2026-10-25"
+#define STAMPY_RELEASE_DATE "2026-11-21"
 
 static GtkWidget *whats_new_bullet(const char *text) {
     GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -1290,12 +1290,14 @@ static void on_whats_new_activated(GSimpleAction *action, GVariant *parameter, g
     gtk_widget_set_hexpand(content, TRUE);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), content);
 
-    gtk_box_append(GTK_BOX(content), whats_new_heading("Metadata Injection"));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Fine-tune metadata injection with toggles for Title, Subject, Tags, Date, and Time."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Configurable Date source switcher (Auto, Geolocation, Watermark)."));
-    gtk_box_append(GTK_BOX(content), whats_new_heading("Data Validation & Formats"));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Dynamic missing data checks tailored to folder structure mode (Regular vs. PU)."));
-    gtk_box_append(GTK_BOX(content), whats_new_bullet("Added CSV geolocation parser with flexible date support."));
+    gtk_box_append(GTK_BOX(content), whats_new_heading("Quick-Stamp & Presets"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Open folders or photos directly from your file manager via \"Open With\" to launch the compact Quick-Stamp window."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Presets now remember and sync their compass folder, with an Auto \"_stamped\" Folder toggle in Quick-Stamp Options."));
+    gtk_box_append(GTK_BOX(content), whats_new_heading("Metadata & Automation"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Strip source EXIF/XMP fields, strip custom words from Title/Subject, or rename exports to TimePhoto_YYYYMMDD_HHMMSS."));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Run custom post-export scripts automatically after batch exports finish."));
+    gtk_box_append(GTK_BOX(content), whats_new_heading("Validation & Reliability"));
+    gtk_box_append(GTK_BOX(content), whats_new_bullet("Added DOCX watermark validation warnings, XLSX date fixes, and auto-incrementing \"_stamped\" export folders."));
 
     adw_dialog_present(dialog, GTK_WIDGET(self));
 }
